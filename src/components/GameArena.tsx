@@ -1632,7 +1632,9 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
     // WebSocket Multiplayer Client Setup
     let lastMpSendAt = 0;
-    if (mode === 'multiplayer' && multiplayerParams) {
+    if (mode === 'multiplayer' && multiplayerParams && window.location.protocol === 'file:') {
+      setMpStatus('Multijugador no disponible en archivo único local (usa Supervivencia o Práctica).');
+    } else if (mode === 'multiplayer' && multiplayerParams) {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
       wsRef.current = ws;

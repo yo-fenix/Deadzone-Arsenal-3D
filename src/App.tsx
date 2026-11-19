@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   Crosshair,
+  Download,
   Lock,
   Monitor,
   Package,
@@ -438,6 +439,17 @@ export default function App() {
         </div>
 
         <div className="pointer-events-auto flex flex-wrap items-center gap-2">
+          {typeof window !== 'undefined' && window.location.protocol !== 'file:' && (
+            <a
+              href="/api/download-singlefile"
+              download="Deadzone-Arsenal-3D.html"
+              className="px-3.5 py-2 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 border border-emerald-400/70 text-xs font-semibold text-white flex items-center gap-2 transition-colors whitespace-nowrap"
+              title="Descarga un único archivo .html que se abre directamente en Chrome sin servidor"
+            >
+              <Download className="w-4 h-4" />
+              <span>Descargar 1 Archivo (Chrome)</span>
+            </a>
+          )}
           <button
             type="button"
             onClick={() => {

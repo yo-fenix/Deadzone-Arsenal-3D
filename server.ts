@@ -1,9 +1,10 @@
 import express from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer as createViteServer } from 'vite';
+import { build as viteBuild, createServer as createViteServer } from 'vite';
 import type {
   CharacterConfig,
   MultiplayerSubMode,
@@ -365,6 +366,23 @@ async function startServer() {
 
   app.get('/api/rooms', (_req, res) => {
     res.json({ rooms: getRoomSummaries() });
+  });
+
+  app.get('/api/download-singlefile', async (_req, res) => {
+    try {
+      const filePath = path.resolve(__dirname, 'dist-singlefile', 'Deadzone-Arsenal-3D.html');
+      if (!fs.existsSync(filePath)) {
+        await viteBuild({ configFile: path.resolve(__dirname, 'vite.singlefile.config.ts') });
+      }
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: 'No se pudo generar el archivo único.' });
+        return;
+      }
+      res.download(filePath, 'Deadzone-Arsenal-3D.html');
+    } catch (err) {
+      console.error('Error serving single-file HTML:', err);
+      res.status(500).json({ error: 'Error al generar el archivo único HTML.' });
+    }
   });
 
   const server = http.createServer(app);

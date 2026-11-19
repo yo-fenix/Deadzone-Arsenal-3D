@@ -27,7 +27,14 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
 
+  const isStandaloneFile = typeof window !== 'undefined' && window.location.protocol === 'file:';
+
   const fetchRooms = async () => {
+    if (isStandaloneFile) {
+      setRooms([]);
+      setError('Modo archivo único sin servidor: abre la URL en línea para jugar Multijugador.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -45,10 +52,11 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       fetchRooms();
+      if (isStandaloneFile) return;
       const iv = window.setInterval(fetchRooms, 4000);
       return () => window.clearInterval(iv);
     }
-  }, [isOpen]);
+  }, [isOpen, isStandaloneFile]);
 
   if (!isOpen) return null;
 
@@ -146,11 +154,16 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
 
             <button
               type="button"
+              disabled={isStandaloneFile}
               onClick={() => onCreateRoom(roomName.trim() || 'Zona Cero', subMode)}
-              className="mt-auto w-full py-3 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2 transition-colors whitespace-nowrap"
+              className={`mt-auto w-full py-3 px-4 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition-colors whitespace-nowrap ${
+                isStandaloneFile
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+              }`}
             >
               <Plus className="w-4 h-4" />
-              <span>Crear y Entrar</span>
+              <span>{isStandaloneFile ? 'Requiere servidor online' : 'Crear y Entrar'}</span>
             </button>
           </div>
 
