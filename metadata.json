@@ -1,0 +1,6 @@
+{
+  "name": "Deadzone Arsenal 3D",
+  "description": "Shooter de zombies en 3D con personalización de personaje, 10 armas, campo de práctica y modo multijugador multiplataforma en tiempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
