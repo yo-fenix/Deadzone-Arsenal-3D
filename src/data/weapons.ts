@@ -323,8 +323,8 @@ export const WEAPONS: WeaponSpec[] = [
     caliber: '9×19mm Parabellum',
     category: 'Pistolas',
     rarity: 'Común',
-    isCategoryStarter: false,
-    description: 'Pistola de servicio con corredera fresada y miras de tritio. Arma de fuego básica.',
+    isCategoryStarter: true,
+    description: 'Pistola de servicio básica con corredera fresada y miras de tritio. Arma inicial más común.',
     damage: 32,
     headshotMult: 3.0,
     rpm: 420,
@@ -339,7 +339,7 @@ export const WEAPONS: WeaponSpec[] = [
     zoomFov: 60,
     recoilKick: 0.022,
     tracerColor: '#fbbf24',
-    cost: 280,
+    cost: 0,
     noiseRadius: 24,
     soundProfile: 'pistol',
   },
@@ -1672,18 +1672,21 @@ export function rollMysteryCrate(tier: CrateTier, ownedWeapons: WeaponId[]): Cra
 }
 
 /**
- * Rolls a random weapon inside physical military crates in Survival (firearms are scarce!).
+ * Rolls a random weapon inside physical military crates found during the match.
+ * Rarity is strictly capped at Épica (never Legendaria).
  */
 export function pickWorldCrateWeapon(alreadyUnlockedInRun: WeaponId[]): WeaponId | null {
-  if (Math.random() > 0.34) return null;
+  if (Math.random() > 0.78) return null;
   const unlockedSet = new Set(alreadyUnlockedInRun);
-  const candidates = WEAPONS.filter((w) => !unlockedSet.has(w.id));
+  const candidates = WEAPONS.filter(
+    (w) => w.rarity !== 'Legendaria' && !unlockedSet.has(w.id)
+  );
   if (candidates.length === 0) return null;
 
   let totalWeight = 0;
   const weights = candidates.map((w) => {
     const base = RARITY_META[w.rarity].dropWeight;
-    const typeFactor = w.isMelee ? 3.5 : 0.35;
+    const typeFactor = w.isMelee ? 1.55 : 0.9;
     const weight = base * typeFactor;
     totalWeight += weight;
     return weight;

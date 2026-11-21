@@ -141,7 +141,7 @@ export const DEFAULT_CHARACTER: CharacterConfig = {
   shoulderStyle: 'standard',
   emblem: 'shield',
   backpack: 'tactical',
-  starterWeaponId: 'machete_apoc',
+  starterWeaponId: 'p9_tactical',
   weaponAttachments: {},
   weaponFinishes: {},
 };

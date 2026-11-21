@@ -115,6 +115,7 @@ import {
   setupStudioEnvironment,
 } from '../three/webglUtils';
 import { platformLabel } from '../utils/platform';
+import { getServerWsUrl } from '../utils/serverUrl';
 
 export interface MultiplayerSessionParams {
   action: 'create' | 'join';
@@ -339,19 +340,19 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const armorStats = getArmorStats(character.armorClass);
 
   // Only weapons owned by the player appear!
-  // Survival starts with melee only (unless the player legitimately earned & equipped a firearm starter).
+  // Survival starts with the most common pistol (p9_tactical) + tactical knife (or player's chosen starter).
   const safeStarter: WeaponId = progression.ownedWeapons.includes(character.starterWeaponId)
     ? character.starterWeaponId
-    : 'machete_apoc';
+    : 'p9_tactical';
 
   const initialUnlocked: WeaponId[] =
     mode === 'survival'
-      ? Array.from(new Set<WeaponId>(['knife_combat', safeStarter]))
+      ? Array.from(new Set<WeaponId>(['knife_combat', 'p9_tactical', safeStarter]))
       : Array.from(new Set<WeaponId>(progression.ownedWeapons));
 
   const initialWeaponId: WeaponId = progression.ownedWeapons.includes(safeStarter)
     ? safeStarter
-    : initialUnlocked[0] || 'knife_combat';
+    : initialUnlocked[0] || 'p9_tactical';
 
   // HUD State
   const [hp, setHp] = useState(armorStats.maxHp);
@@ -380,7 +381,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
     mode === 'practice'
       ? 'Campo de Práctica — Tus armas y accesorios listos'
       : mode === 'survival'
-      ? 'Oleada 1 — Empieza cuerpo a cuerpo; consigue armas de fuego en cajas o tienda · Jefe cada 5 oleadas'
+      ? 'Oleada 1 — Empieza con pistola común; busca armas aleatorias en cajas (máx. Épica) · Jefe cada 5 oleadas'
       : null
   );
   const [activeWeaponId, setActiveWeaponId] = useState<WeaponId>(initialWeaponId);
@@ -1019,8 +1020,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
     eng.velY = 0;
     const validStarter: WeaponId = progressionRef.current.ownedWeapons.includes(character.starterWeaponId)
       ? character.starterWeaponId
-      : 'machete_apoc';
-    const starterReset = Array.from(new Set<WeaponId>(['knife_combat', validStarter]));
+      : 'p9_tactical';
+    const starterReset = Array.from(new Set<WeaponId>(['knife_combat', 'p9_tactical', validStarter]));
     eng.unlockedWeapons = new Set<WeaponId>(starterReset);
     setUnlockedWeapons(starterReset);
     eng.activeWeaponId = validStarter;
@@ -1047,7 +1048,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
     setActiveBoss(null);
     setAmmoState({ ...eng.ammo });
     setGameOver(false);
-    setWaveBanner('Oleada 1 — Empieza cuerpo a cuerpo; consigue armas de fuego en cajas o tienda · Jefe cada 5 oleadas');
+    setWaveBanner('Oleada 1 — Empieza con pistola común; busca armas aleatorias en cajas (máx. Épica) · Jefe cada 5 oleadas');
     window.setTimeout(() => setWaveBanner(null), 3600);
   };
 
@@ -1632,11 +1633,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
     // WebSocket Multiplayer Client Setup
     let lastMpSendAt = 0;
-    if (mode === 'multiplayer' && multiplayerParams && window.location.protocol === 'file:') {
-      setMpStatus('Multijugador no disponible en archivo único local (usa Supervivencia o Práctica).');
-    } else if (mode === 'multiplayer' && multiplayerParams) {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    if (mode === 'multiplayer' && multiplayerParams) {
+      const ws = new WebSocket(getServerWsUrl());
       wsRef.current = ws;
 
       ws.onopen = () => {

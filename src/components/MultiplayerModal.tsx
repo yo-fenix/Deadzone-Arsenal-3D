@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Users, Plus, RefreshCw, X, Shield, Swords, Smartphone, Monitor, Tablet } from 'lucide-react';
+import { Users, Plus, RefreshCw, X, Shield, Swords, Smartphone, Monitor, Tablet, Globe } from 'lucide-react';
 import { MultiplayerSubMode, PlatformType, RoomSummary } from '../types/game';
 import { platformLabel } from '../utils/platform';
+import {
+  DEFAULT_CLOUD_SERVER_URL,
+  getApiUrl,
+  getStandaloneServerUrl,
+  isStandaloneFileMode,
+  resetStandaloneServerUrl,
+  setStandaloneServerUrl,
+} from '../utils/serverUrl';
 
 interface MultiplayerModalProps {
   isOpen: boolean;
@@ -27,23 +35,25 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
 
-  const isStandaloneFile = typeof window !== 'undefined' && window.location.protocol === 'file:';
+  const isStandaloneFile = isStandaloneFileMode();
+  const [serverUrl, setServerUrl] = useState<string>(() => getStandaloneServerUrl());
+  const [serverInput, setServerInput] = useState<string>(() => getStandaloneServerUrl());
+  const [editingServer, setEditingServer] = useState(false);
 
   const fetchRooms = async () => {
-    if (isStandaloneFile) {
-      setRooms([]);
-      setError('Modo archivo único sin servidor: abre la URL en línea para jugar Multijugador.');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/rooms');
+      const res = await fetch(getApiUrl('/api/rooms'));
       if (!res.ok) throw new Error('Error al consultar salas');
       const data = await res.json();
       setRooms(Array.isArray(data.rooms) ? data.rooms : []);
     } catch {
-      setError('No se pudo cargar la lista de salas.');
+      setError(
+        isStandaloneFile
+          ? `No se pudo conectar al servidor (${serverUrl}). Verifica tu conexión o cambia la URL del servidor.`
+          : 'No se pudo cargar la lista de salas.'
+      );
     } finally {
       setLoading(false);
     }
@@ -52,11 +62,17 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       fetchRooms();
-      if (isStandaloneFile) return;
       const iv = window.setInterval(fetchRooms, 4000);
       return () => window.clearInterval(iv);
     }
-  }, [isOpen, isStandaloneFile]);
+  }, [isOpen, serverUrl]);
+
+  const applyServerUrl = (nextRaw: string) => {
+    const saved = setStandaloneServerUrl(nextRaw);
+    setServerUrl(saved);
+    setServerInput(saved);
+    setEditingServer(false);
+  };
 
   if (!isOpen) return null;
 
@@ -99,6 +115,69 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
             </button>
           </div>
         </div>
+
+        {isStandaloneFile && (
+          <div className="px-6 py-2.5 border-b border-slate-800 bg-[#0b1017] flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-slate-400 shrink-0">Servidor Chrome:</span>
+                <span className="font-mono-num text-emerald-300 truncate">{serverUrl}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingServer((v) => !v)}
+                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 shrink-0"
+              >
+                {editingServer ? 'Cancelar' : 'Cambiar servidor'}
+              </button>
+            </div>
+            {editingServer && (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={serverInput}
+                  onChange={(e) => setServerInput(e.target.value)}
+                  placeholder="https://..."
+                  className="flex-1 min-w-[200px] px-3 py-1.5 rounded bg-[#090c10] border border-slate-700 text-xs font-mono-num text-white focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => applyServerUrl(serverInput)}
+                  className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
+                >
+                  Conectar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const def = resetStandaloneServerUrl();
+                    setServerUrl(def);
+                    setServerInput(def);
+                    setEditingServer(false);
+                  }}
+                  className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]"
+                >
+                  Original
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyServerUrl(DEFAULT_CLOUD_SERVER_URL)}
+                  className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[11px]"
+                >
+                  Nube Pública
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyServerUrl('http://localhost:3000')}
+                  className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px]"
+                >
+                  Localhost
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Left: Create Room */}
@@ -154,16 +233,11 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
 
             <button
               type="button"
-              disabled={isStandaloneFile}
               onClick={() => onCreateRoom(roomName.trim() || 'Zona Cero', subMode)}
-              className={`mt-auto w-full py-3 px-4 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition-colors whitespace-nowrap ${
-                isStandaloneFile
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-              }`}
+              className="mt-auto w-full py-3 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2 transition-colors whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
-              <span>{isStandaloneFile ? 'Requiere servidor online' : 'Crear y Entrar'}</span>
+              <span>Crear y Entrar</span>
             </button>
           </div>
 

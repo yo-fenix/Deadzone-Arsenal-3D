@@ -360,6 +360,18 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+  app.use('/api', (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, rooms: rooms.size, players: clients.size });
   });
@@ -368,7 +380,7 @@ async function startServer() {
     res.json({ rooms: getRoomSummaries() });
   });
 
-  app.get('/api/download-singlefile', async (_req, res) => {
+  app.get('/api/download-singlefile', async (req, res) => {
     try {
       const filePath = path.resolve(__dirname, 'dist-singlefile', 'Deadzone-Arsenal-3D.html');
       if (!fs.existsSync(filePath)) {
@@ -378,7 +390,16 @@ async function startServer() {
         res.status(404).json({ error: 'No se pudo generar el archivo único.' });
         return;
       }
-      res.download(filePath, 'Deadzone-Arsenal-3D.html');
+      const protoHeader = String(req.headers['x-forwarded-proto'] || req.protocol || 'https');
+      const proto = protoHeader.split(',')[0].trim();
+      const host = String(req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).split(',')[0].trim();
+      const serverOrigin = `${proto}://${host}`;
+      let html = fs.readFileSync(filePath, 'utf8');
+      const injectTag = `<script>window.__DEADZONE_SERVER_URL__=${JSON.stringify(serverOrigin)};</script></head>`;
+      html = html.includes('</head>') ? html.replace('</head>', injectTag) : html;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="Deadzone-Arsenal-3D.html"');
+      res.send(html);
     } catch (err) {
       console.error('Error serving single-file HTML:', err);
       res.status(500).json({ error: 'Error al generar el archivo único HTML.' });

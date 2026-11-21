@@ -72,7 +72,7 @@ import { GameArena, MultiplayerSessionParams } from './components/GameArena';
 import { MultiplayerModal } from './components/MultiplayerModal';
 import { soundEngine } from './audio/soundEngine';
 
-const CHAR_STORAGE_KEY = 'deadzone_arsenal_character_v2';
+const CHAR_STORAGE_KEY = 'deadzone_arsenal_character_v3';
 const PROG_STORAGE_KEY = 'deadzone_arsenal_progression_v2';
 
 type CustomTab = 'identidad' | 'armadura' | 'armas' | 'accesorios' | 'cajas';
@@ -127,7 +127,7 @@ export default function App() {
             ? candidate
             : progression.ownedWeapons.includes(DEFAULT_CHARACTER.starterWeaponId)
             ? DEFAULT_CHARACTER.starterWeaponId
-            : progression.ownedWeapons[0] || 'knife_combat';
+            : progression.ownedWeapons[0] || 'p9_tactical';
         return { ...DEFAULT_CHARACTER, ...parsed, starterWeaponId: safeStarter };
       }
     } catch {
@@ -444,7 +444,7 @@ export default function App() {
               href="/api/download-singlefile"
               download="Deadzone-Arsenal-3D.html"
               className="px-3.5 py-2 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 border border-emerald-400/70 text-xs font-semibold text-white flex items-center gap-2 transition-colors whitespace-nowrap"
-              title="Descarga un único archivo .html que se abre directamente en Chrome sin servidor"
+              title="Descarga un único archivo .html que se abre directo en Chrome y se conecta al servidor multijugador"
             >
               <Download className="w-4 h-4" />
               <span>Descargar 1 Archivo (Chrome)</span>
