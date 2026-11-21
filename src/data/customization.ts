@@ -15,6 +15,7 @@ export interface ArmorClassOption {
   id: ArmorClass;
   label: string;
   perk: string;
+  cost: number;
   maxHp: number;
   speedMult: number;
   regenPerSec: number;
@@ -22,36 +23,49 @@ export interface ArmorClassOption {
 
 export const ARMOR_CLASSES: ArmorClassOption[] = [
   {
-    id: 'tactical',
-    label: 'Asalto Táctico',
-    perk: 'Equilibrado · 100 PS · Velocidad Estándar',
-    maxHp: 100,
-    speedMult: 1.0,
+    id: 'none',
+    label: 'Nada',
+    perk: 'Sin clase · 85 PS · Velocidad base · Ranura gratuita',
+    cost: 0,
+    maxHp: 85,
+    speedMult: 0.96,
     regenPerSec: 0,
   },
   {
-    id: 'heavy',
-    label: 'Blindado Pesado',
-    perk: '+45 PS Máx · Armadura Reforzada',
-    maxHp: 145,
-    speedMult: 0.9,
+    id: 'tactical',
+    label: 'Asalto Táctico',
+    perk: '105 PS · +2% Velocidad · Entrenamiento estándar',
+    cost: 250,
+    maxHp: 105,
+    speedMult: 1.02,
     regenPerSec: 0,
   },
   {
     id: 'recon',
     label: 'Explorador Sigilo',
-    perk: '+18% Velocidad · Alta Agilidad',
-    maxHp: 90,
+    perk: '115 PS · +18% Velocidad · Alta movilidad',
+    cost: 500,
+    maxHp: 115,
     speedMult: 1.18,
     regenPerSec: 0,
   },
   {
+    id: 'heavy',
+    label: 'Blindado Pesado',
+    perk: '165 PS Máx · Placas reforzadas · +0.5 PS/s',
+    cost: 850,
+    maxHp: 165,
+    speedMult: 0.94,
+    regenPerSec: 0.5,
+  },
+  {
     id: 'medic',
     label: 'Médico Biohazard',
-    perk: 'Regeneración +2.5 PS/s · 105 PS',
-    maxHp: 105,
-    speedMult: 1.03,
-    regenPerSec: 2.5,
+    perk: '135 PS · +8% Velocidad · Regeneración +3.0 PS/s',
+    cost: 1300,
+    maxHp: 135,
+    speedMult: 1.08,
+    regenPerSec: 3.0,
   },
 ];
 
@@ -132,7 +146,7 @@ export const STARTER_WEAPON_OPTIONS: WeaponId[] = getCategoryStarterWeapons();
 
 export const DEFAULT_CHARACTER: CharacterConfig = {
   name: 'Operador-01',
-  armorClass: 'tactical',
+  armorClass: 'none',
   helmet: 'visor',
   armorColor: '#1e293b',
   secondaryColor: '#475569',
@@ -149,6 +163,7 @@ export const DEFAULT_CHARACTER: CharacterConfig = {
 export const DEFAULT_PROGRESSION: PlayerProgression = {
   credits: 150,
   ownedWeapons: getCategoryStarterWeapons(),
+  ownedClasses: ['none'],
   ownedAttachments: ['red_dot'],
   ownedFinishes: ['factory'],
   weaponAttachments: {},

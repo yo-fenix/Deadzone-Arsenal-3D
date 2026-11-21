@@ -374,8 +374,26 @@ export function buildSurvivalArena(scene: THREE.Scene, textures: ProceduralTextu
     { pos: new THREE.Vector3(83, 0, 27), weaponId: 'scar_pesado' },
   ];
 
-  // 5 Drivable Vehicles parked along the city avenues!
+  // 7 Drivable Vehicles (2 Motorcycles + 5 Cars/Trucks) parked along the city avenues!
   const vehicleSpawns: VehicleSpawnPoint[] = [
+    {
+      type: 'moto',
+      name: 'Moto Cross Apocalipsis',
+      pos: new THREE.Vector3(-4.5, 0, 8.5),
+      yaw: 0,
+      maxSpeed: 33,
+      accel: 26,
+      maxHp: 320,
+    },
+    {
+      type: 'moto',
+      name: 'Moto Táctica Interceptor',
+      pos: new THREE.Vector3(38, 0, -34),
+      yaw: Math.PI / 2,
+      maxSpeed: 35,
+      accel: 28,
+      maxHp: 340,
+    },
     {
       type: 'sedan',
       name: 'Patrulla Policial',

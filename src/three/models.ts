@@ -1788,8 +1788,15 @@ export function buildCharacterMesh(
   const rightLeg = makeLeg(0.15);
   bodyGroup.add(leftLeg, rightLeg);
 
-  const torsoWidth = config.armorClass === 'heavy' ? 0.62 : config.armorClass === 'recon' ? 0.48 : 0.54;
-  const torsoDepth = config.armorClass === 'heavy' ? 0.36 : 0.28;
+  const torsoWidth =
+    config.armorClass === 'heavy'
+      ? 0.62
+      : config.armorClass === 'recon'
+      ? 0.48
+      : config.armorClass === 'none'
+      ? 0.49
+      : 0.54;
+  const torsoDepth = config.armorClass === 'heavy' ? 0.36 : config.armorClass === 'none' ? 0.25 : 0.28;
 
   const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.18, 0.26), darkUnderMat);
   pelvis.position.set(0, 0.9, 0);
@@ -1805,15 +1812,17 @@ export function buildCharacterMesh(
   chest.castShadow = true;
   bodyGroup.add(chest);
 
-  const chestPlate = new THREE.Mesh(
-    new THREE.BoxGeometry(torsoWidth * 0.78, 0.34, torsoDepth + 0.05),
-    config.armorClass === 'medic'
-      ? new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4, metalness: 0.2 })
-      : metalTrimMat
-  );
-  chestPlate.position.set(0, 1.29, -0.01);
-  chestPlate.castShadow = true;
-  bodyGroup.add(chestPlate);
+  if (config.armorClass !== 'none') {
+    const chestPlate = new THREE.Mesh(
+      new THREE.BoxGeometry(torsoWidth * 0.78, 0.34, torsoDepth + 0.05),
+      config.armorClass === 'medic'
+        ? new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4, metalness: 0.2 })
+        : metalTrimMat
+    );
+    chestPlate.position.set(0, 1.29, -0.01);
+    chestPlate.castShadow = true;
+    bodyGroup.add(chestPlate);
+  }
 
   const chestStrip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.045, 0.02), accentMat);
   chestStrip.position.set(0, 1.4, -torsoDepth / 2 - 0.035);
@@ -2946,7 +2955,9 @@ export function buildDrivableVehicleMesh(type: VehicleType, rustedTex: THREE.Can
   root.add(bodyGroup);
 
   const colorHex =
-    type === 'sedan'
+    type === 'moto'
+      ? 0xdc2626
+      : type === 'sedan'
       ? 0x1e293b
       : type === 'pickup'
       ? 0x3f6212
@@ -2958,9 +2969,9 @@ export function buildDrivableVehicleMesh(type: VehicleType, rustedTex: THREE.Can
 
   const paintMat = new THREE.MeshStandardMaterial({
     color: colorHex,
-    map: type === 'sport' ? undefined : rustedTex,
-    roughness: type === 'sport' ? 0.28 : 0.55,
-    metalness: type === 'sport' ? 0.72 : 0.45,
+    map: type === 'sport' || type === 'moto' ? undefined : rustedTex,
+    roughness: type === 'sport' || type === 'moto' ? 0.28 : 0.55,
+    metalness: type === 'sport' || type === 'moto' ? 0.72 : 0.45,
   });
   const trimMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.6, metalness: 0.65 });
   const chromeMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.25, metalness: 0.9 });
@@ -2983,6 +2994,98 @@ export function buildDrivableVehicleMesh(type: VehicleType, rustedTex: THREE.Can
     emissive: 0xdc2626,
     emissiveIntensity: 1.3,
   });
+
+  if (type === 'moto') {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.34, 1.45), trimMat);
+    frame.position.set(0, 0.55, 0.04);
+    frame.castShadow = true;
+
+    const engine = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.32, 0.44), chromeMat);
+    engine.position.set(0, 0.48, -0.05);
+
+    const tank = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 10), paintMat);
+    tank.scale.set(0.92, 0.78, 1.45);
+    tank.position.set(0, 0.84, -0.28);
+    tank.castShadow = true;
+
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.68), trimMat);
+    seat.position.set(0, 0.8, 0.28);
+    seat.rotation.x = 0.08;
+
+    const tailFender = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.52), paintMat);
+    tailFender.position.set(0, 0.82, 0.78);
+    tailFender.rotation.x = -0.22;
+
+    const exhaustL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.82, 10), chromeMat);
+    exhaustL.rotation.x = Math.PI / 2 + 0.12;
+    exhaustL.position.set(-0.22, 0.42, 0.45);
+    const exhaustR = exhaustL.clone();
+    exhaustR.position.x = 0.22;
+
+    const fairing = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.4, 0.42), paintMat);
+    fairing.position.set(0, 0.92, -0.68);
+    fairing.rotation.x = 0.32;
+    const windScreen = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.06), glassMat);
+    windScreen.position.set(0, 1.12, -0.7);
+    windScreen.rotation.x = 0.45;
+
+    const hl = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 14), headlightMat);
+    hl.rotation.x = Math.PI / 2;
+    hl.position.set(0, 0.88, -0.9);
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.09, 0.06), tailMat);
+    tl.position.set(0, 0.84, 1.04);
+
+    bodyGroup.add(frame, engine, tank, seat, tailFender, exhaustL, exhaustR, fairing, windScreen, hl, tl);
+
+    const headlightBeam = new THREE.SpotLight(0xfffbeb, 0, 42, Math.PI / 4.2, 0.45, 1.3);
+    headlightBeam.position.set(0, 0.9, -0.95);
+    const beamTarget = new THREE.Object3D();
+    beamTarget.position.set(0, 0.2, -18);
+    root.add(headlightBeam, beamTarget);
+    headlightBeam.target = beamTarget;
+
+    const makeMotoWheel = () => {
+      const wg = new THREE.Group();
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.18, 18), tireMat);
+      tire.rotation.z = Math.PI / 2;
+      tire.castShadow = true;
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.2, 12), chromeMat);
+      rim.rotation.z = Math.PI / 2;
+      wg.add(tire, rim);
+      return wg;
+    };
+
+    const frontSteerLeft = new THREE.Group();
+    frontSteerLeft.position.set(0, 0.35, -0.92);
+    const wFront = makeMotoWheel();
+    const forkL = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.65, 8), chromeMat);
+    forkL.position.set(-0.12, 0.28, 0.08);
+    forkL.rotation.x = -0.32;
+    const forkR = forkL.clone();
+    forkR.position.x = 0.12;
+    const handlebar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.76, 8), trimMat);
+    handlebar.rotation.z = Math.PI / 2;
+    handlebar.position.set(0, 0.64, 0.18);
+    frontSteerLeft.add(wFront, forkL, forkR, handlebar);
+
+    const frontSteerRight = new THREE.Group();
+    frontSteerRight.position.set(0, 0.35, -0.92);
+
+    const wRear = makeMotoWheel();
+    wRear.position.set(0, 0.35, 0.9);
+
+    root.add(frontSteerLeft, frontSteerRight, wRear);
+    return {
+      root,
+      bodyGroup,
+      wheels: [wFront, wRear],
+      frontSteerLeft,
+      frontSteerRight,
+      headlightBeam,
+      headlightLenses: [hl],
+      sirenMeshes: [],
+    };
+  }
 
   const width = type === 'ambulance' ? 2.25 : type === 'pickup' ? 2.15 : type === 'buggy' ? 1.95 : 2.05;
   const length = type === 'ambulance' ? 5.1 : type === 'pickup' ? 4.8 : type === 'buggy' ? 3.8 : 4.4;

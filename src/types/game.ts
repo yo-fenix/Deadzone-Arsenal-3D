@@ -4,7 +4,7 @@ export type GameMode = 'survival' | 'practice' | 'multiplayer';
 
 export type MultiplayerSubMode = 'coop' | 'pvp';
 
-export type ArmorClass = 'tactical' | 'heavy' | 'recon' | 'medic';
+export type ArmorClass = 'none' | 'tactical' | 'recon' | 'heavy' | 'medic';
 
 export type HelmetType =
   | 'ballistic'
@@ -210,6 +210,7 @@ export interface CharacterConfig {
 export interface PlayerProgression {
   credits: number;
   ownedWeapons: WeaponId[];
+  ownedClasses?: ArmorClass[];
   ownedAttachments: string[];
   ownedFinishes?: WeaponFinish[];
   weaponAttachments: Partial<Record<WeaponId, WeaponAttachments>>;
@@ -232,7 +233,11 @@ export type BossVariantId =
   | 'riot_juggernaut'
   | 'apex_abomination';
 
-export type VehicleType = 'sedan' | 'pickup' | 'sport' | 'ambulance' | 'buggy';
+export type VehicleType = 'moto' | 'sedan' | 'pickup' | 'sport' | 'ambulance' | 'buggy';
+
+export type VestTier = 'none' | 'light' | 'tactical' | 'heavy' | 'juggernaut';
+
+export type WoundType = 'none' | 'superficial' | 'bleeding' | 'bite';
 
 export type TrapType = 'bear_trap' | 'landmine';
 

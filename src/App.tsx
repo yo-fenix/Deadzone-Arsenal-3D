@@ -24,6 +24,7 @@ import {
   Users,
 } from 'lucide-react';
 import {
+  ArmorClass,
   AttachmentSlot,
   CharacterConfig,
   GameMode,
@@ -91,9 +92,13 @@ export default function App() {
         const mergedOwned = Array.from(
           new Set<WeaponId>([...getCategoryStarterWeapons(), ...validSavedWeapons])
         );
+        const validSavedClasses = (Array.isArray(parsed.ownedClasses) ? parsed.ownedClasses : []).filter(
+          (c): c is ArmorClass => ARMOR_CLASSES.some((ac) => ac.id === c)
+        );
         return {
           credits: typeof parsed.credits === 'number' ? parsed.credits : DEFAULT_PROGRESSION.credits,
           ownedWeapons: mergedOwned,
+          ownedClasses: Array.from(new Set<ArmorClass>(['none', ...validSavedClasses])),
           ownedAttachments: Array.from(
             new Set([
               'red_dot',
@@ -128,7 +133,10 @@ export default function App() {
             : progression.ownedWeapons.includes(DEFAULT_CHARACTER.starterWeaponId)
             ? DEFAULT_CHARACTER.starterWeaponId
             : progression.ownedWeapons[0] || 'p9_tactical';
-        return { ...DEFAULT_CHARACTER, ...parsed, starterWeaponId: safeStarter };
+        const ownedCls = progression.ownedClasses || ['none'];
+        const safeClass =
+          parsed.armorClass && ownedCls.includes(parsed.armorClass) ? parsed.armorClass : 'none';
+        return { ...DEFAULT_CHARACTER, ...parsed, armorClass: safeClass, starterWeaponId: safeStarter };
       }
     } catch {
       // ignore storage errors
@@ -148,6 +156,7 @@ export default function App() {
   const [onlyOwnedWeapons, setOnlyOwnedWeapons] = useState(false);
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [lastCrateResult, setLastCrateResult] = useState<CrateRollResult | null>(null);
+  const [classNotice, setClassNotice] = useState<string | null>(null);
 
   const [activeMode, setActiveMode] = useState<GameMode | null>(null);
   const [mpModalOpen, setMpModalOpen] = useState(false);
@@ -179,6 +188,33 @@ export default function App() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  const buyOrEquipClass = (classId: ArmorClass) => {
+    const clsSpec = ARMOR_CLASSES.find((c) => c.id === classId);
+    if (!clsSpec) return;
+    const owned = (progression.ownedClasses || ['none']).includes(classId) || clsSpec.cost === 0;
+    if (owned) {
+      soundEngine.playReload();
+      setClassNotice(null);
+      setCharacter((prev) => ({ ...prev, armorClass: classId }));
+      return;
+    }
+    if (progression.credits < clsSpec.cost) {
+      soundEngine.playEmptyClick();
+      setClassNotice(
+        `Necesitas ${clsSpec.cost} Créditos para comprar ${clsSpec.label} (tienes ${progression.credits}).`
+      );
+      return;
+    }
+    soundEngine.playPickup();
+    setClassNotice(`¡Clase ${clsSpec.label} comprada y equipada!`);
+    setProgression((prev) => ({
+      ...prev,
+      credits: prev.credits - clsSpec.cost,
+      ownedClasses: Array.from(new Set<ArmorClass>(['none', ...(prev.ownedClasses || ['none']), classId])),
+    }));
+    setCharacter((prev) => ({ ...prev, armorClass: classId }));
+  };
 
   const buyWeapon = (weaponId: WeaponId) => {
     const spec = WEAPON_MAP[weaponId];
@@ -583,26 +619,69 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Clase Táctica</label>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <label className="block text-xs text-slate-400">
+                        Clase Táctica (5 ranuras)
+                      </label>
+                      <span className="font-mono-num text-[11px] font-semibold text-amber-400">
+                        {progression.credits} Cr
+                      </span>
+                    </div>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {ARMOR_CLASSES.map((cls) => (
-                        <button
-                          key={cls.id}
-                          type="button"
-                          onClick={() => setCharacter({ ...character, armorClass: cls.id })}
-                          className={`px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${
-                            character.armorClass === cls.id
-                              ? 'bg-amber-500/15 border-amber-400 text-amber-300'
-                              : 'bg-[#090c10] border-slate-800 text-slate-300 hover:border-slate-600'
-                          }`}
-                        >
-                          <div className="font-semibold truncate">{cls.label}</div>
-                        </button>
-                      ))}
+                      {ARMOR_CLASSES.map((cls) => {
+                        const owned =
+                          (progression.ownedClasses || ['none']).includes(cls.id) || cls.cost === 0;
+                        const equipped = character.armorClass === cls.id;
+                        const canAfford = progression.credits >= cls.cost;
+                        return (
+                          <button
+                            key={cls.id}
+                            type="button"
+                            onClick={() => buyOrEquipClass(cls.id)}
+                            className={`${
+                              cls.id === 'none' ? 'col-span-2' : ''
+                            } px-2.5 py-2 rounded-lg text-xs font-medium border text-left transition-colors ${
+                              equipped
+                                ? 'bg-amber-500/15 border-amber-400 text-amber-300'
+                                : owned
+                                ? 'bg-[#090c10] border-slate-700 text-slate-200 hover:border-slate-500'
+                                : canAfford
+                                ? 'bg-emerald-950/35 border-emerald-700/70 text-emerald-200 hover:border-emerald-400'
+                                : 'bg-[#090c10] border-slate-800 text-slate-400 hover:border-slate-700'
+                            }`}
+                            title={cls.perk}
+                          >
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="font-semibold truncate">{cls.label}</span>
+                              {equipped ? (
+                                <span className="text-[10px] font-bold text-amber-300 shrink-0">
+                                  Equipada
+                                </span>
+                              ) : owned ? (
+                                <span className="text-[10px] text-emerald-400 shrink-0">
+                                  {cls.cost === 0 ? 'Gratis' : 'Tuya'}
+                                </span>
+                              ) : (
+                                <span
+                                  className={`font-mono-num text-[10px] flex items-center gap-0.5 shrink-0 ${
+                                    canAfford ? 'text-amber-300 font-bold' : 'text-slate-500'
+                                  }`}
+                                >
+                                  <Lock className="w-2.5 h-2.5" />
+                                  <span>{cls.cost} Cr</span>
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1.5">
                       {ARMOR_CLASSES.find((c) => c.id === character.armorClass)?.perk}
                     </p>
+                    {classNotice && (
+                      <p className="text-[11px] text-amber-300 mt-1 font-medium">{classNotice}</p>
+                    )}
                   </div>
 
                   <div>

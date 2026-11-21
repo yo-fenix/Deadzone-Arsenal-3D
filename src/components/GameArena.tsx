@@ -2,13 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
   AlertTriangle,
+  ArrowLeftRight,
   Backpack,
   Bomb,
   Car,
   Crosshair,
+  Droplets,
   Eye,
   Footprints,
+  Fuel,
   Heart,
+  HeartPulse,
   Lightbulb,
   Lock,
   LogOut,
@@ -22,6 +26,7 @@ import {
   Sliders,
   Smartphone,
   Target,
+  Trash2,
   Users,
   Volume2,
   VolumeX,
@@ -41,10 +46,12 @@ import {
   ServerZombieState,
   TrapType,
   VehicleType,
+  VestTier,
   WeaponAttachments,
   WeaponCategory,
   WeaponFinish,
   WeaponId,
+  WoundType,
   ZombieAIState,
   ZombieType,
 } from '../types/game';
@@ -246,10 +253,14 @@ interface DrivableVehicleEntity {
   accel: number;
   hp: number;
   maxHp: number;
+  fuel: number;
+  maxFuel: number;
   steerAngle: number;
   headlightsOn: boolean;
   lastHornAt: number;
   lastRamAt: number;
+  lastEmptyFuelToastAt: number;
+  lowFuelWarned: boolean;
 }
 
 interface NoiseRingEffect {
@@ -273,11 +284,21 @@ interface ParticleBurst {
   maxLife: number;
 }
 
-type PickupKind = 'medkit' | 'ammo' | 'scrap' | 'stones' | 'grenade' | 'trap';
+type PickupKind =
+  | 'medkit'
+  | 'ammo'
+  | 'scrap'
+  | 'stones'
+  | 'grenade'
+  | 'trap'
+  | 'vest'
+  | 'bandage'
+  | 'fuel';
 
 interface PickupEntity {
   mesh: THREE.Group;
   kind: PickupKind;
+  vestTier?: VestTier;
   life: number;
 }
 
@@ -288,6 +309,7 @@ interface WeaponWorldDrop {
   pos: THREE.Vector3;
   collected: boolean;
   respawnAt: number;
+  isPlayerDrop?: boolean;
 }
 
 interface SupplyCrateEntity {
@@ -299,6 +321,100 @@ interface SupplyCrateEntity {
   opened: boolean;
   respawnAt: number;
 }
+
+const MAX_WEAPON_SLOTS = 5;
+
+const VEST_CATALOG: Record<
+  VestTier,
+  { label: string; maxShield: number; dmgReduction: number; colorHex: string; meshColor: number; scrapCost: number }
+> = {
+  none: {
+    label: 'Sin Chaleco',
+    maxShield: 0,
+    dmgReduction: 0,
+    colorHex: '#64748b',
+    meshColor: 0x64748b,
+    scrapCost: 0,
+  },
+  light: {
+    label: 'Chaleco Ligero Niv. 1',
+    maxShield: 50,
+    dmgReduction: 0.18,
+    colorHex: '#38bdf8',
+    meshColor: 0x38bdf8,
+    scrapCost: 130,
+  },
+  tactical: {
+    label: 'Chaleco Táctico Niv. 2',
+    maxShield: 90,
+    dmgReduction: 0.3,
+    colorHex: '#3b82f6',
+    meshColor: 0x3b82f6,
+    scrapCost: 220,
+  },
+  heavy: {
+    label: 'Chaleco Balístico Niv. 3',
+    maxShield: 140,
+    dmgReduction: 0.42,
+    colorHex: '#a855f7',
+    meshColor: 0xa855f7,
+    scrapCost: 340,
+  },
+  juggernaut: {
+    label: 'Blindaje Juggernaut Niv. 4',
+    maxShield: 200,
+    dmgReduction: 0.55,
+    colorHex: '#f59e0b',
+    meshColor: 0xf59e0b,
+    scrapCost: 480,
+  },
+};
+
+const VEST_TIER_ORDER: Record<VestTier, number> = {
+  none: 0,
+  light: 1,
+  tactical: 2,
+  heavy: 3,
+  juggernaut: 4,
+};
+
+const WOUND_META: Record<
+  WoundType,
+  { label: string; shortLabel: string; dotPerSec: number; badgeClass: string; bannerClass: string; message: string }
+> = {
+  none: {
+    label: 'Sano',
+    shortLabel: 'Sin heridas',
+    dotPerSec: 0,
+    badgeClass: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300',
+    bannerClass: '',
+    message: '',
+  },
+  superficial: {
+    label: 'Herida Superficial',
+    shortLabel: 'Herida Superficial (0 PS/s)',
+    dotPerSec: 0,
+    badgeClass: 'bg-amber-500/20 border-amber-400/70 text-amber-200',
+    bannerClass: 'bg-amber-950/92 border-amber-400 text-amber-200',
+    message: '¡HERIDA SUPERFICIAL! Rasguño leve (0 PS/s) — Puedes limpiar con [N] Venda',
+  },
+  bleeding: {
+    label: 'Sangrado',
+    shortLabel: 'Sangrado (-0.1 PS/s)',
+    dotPerSec: 0.1,
+    badgeClass: 'bg-red-500/20 border-red-400/80 text-red-300',
+    bannerClass: 'bg-red-950/92 border-red-400 text-red-200',
+    message: '¡SANGRADO! Pierdes 0.1 PS cada segundo — Usa [N] Venda o [H] Botiquín',
+  },
+  bite: {
+    label: 'Mordisco',
+    shortLabel: 'Mordisco (-1.0 PS/s)',
+    dotPerSec: 1.0,
+    badgeClass: 'bg-rose-600/30 border-rose-500 text-rose-200',
+    bannerClass: 'bg-rose-950/95 border-rose-500 text-rose-100',
+    message: '¡MORDISCO! Pierdes 1.0 PS por segundo — ¡Cúrate ya con [N] Venda o [H] Botiquín!',
+  },
+};
 
 interface FloatingDamage {
   id: number;
@@ -347,10 +463,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
   const initialUnlocked: WeaponId[] =
     mode === 'survival'
-      ? Array.from(new Set<WeaponId>(['knife_combat', 'p9_tactical', safeStarter]))
-      : Array.from(new Set<WeaponId>(progression.ownedWeapons));
+      ? Array.from(new Set<WeaponId>(['p9_tactical', 'knife_combat', safeStarter])).slice(0, MAX_WEAPON_SLOTS)
+      : Array.from(new Set<WeaponId>(progression.ownedWeapons)).slice(0, MAX_WEAPON_SLOTS);
 
-  const initialWeaponId: WeaponId = progression.ownedWeapons.includes(safeStarter)
+  const initialWeaponId: WeaponId = initialUnlocked.includes(safeStarter)
     ? safeStarter
     : initialUnlocked[0] || 'p9_tactical';
 
@@ -358,6 +474,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const [hp, setHp] = useState(armorStats.maxHp);
   const [maxHp, setMaxHp] = useState(armorStats.maxHp);
   const [stamina, setStamina] = useState(100);
+  const [vestTier, setVestTier] = useState<VestTier>(mode === 'practice' ? 'tactical' : 'none');
+  const [armorShield, setArmorShield] = useState(mode === 'practice' ? 90 : 0);
+  const [armorShieldMax, setArmorShieldMax] = useState(mode === 'practice' ? 90 : 0);
+  const [bandages, setBandages] = useState(mode === 'practice' ? 99 : 2);
+  const [fuelCans, setFuelCans] = useState(mode === 'practice' ? 99 : 1);
+  const [woundType, setWoundType] = useState<WoundType>('none');
+  const [woundBanner, setWoundBanner] = useState<{ type: WoundType; text: string } | null>(null);
   const [scrap, setScrap] = useState(mode === 'survival' ? 120 : 9999);
   const [medkits, setMedkits] = useState(mode === 'survival' ? 1 : 3);
   const [stones, setStones] = useState(5);
@@ -379,13 +502,19 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const [activeBoss, setActiveBoss] = useState<ActiveBossHudState | null>(null);
   const [waveBanner, setWaveBanner] = useState<string | null>(
     mode === 'practice'
-      ? 'Campo de Práctica — Tus armas y accesorios listos'
+      ? 'Campo de Práctica — Tus 5 ranuras de armas y accesorios listos'
       : mode === 'survival'
-      ? 'Oleada 1 — Empieza con pistola común; busca armas aleatorias en cajas (máx. Épica) · Jefe cada 5 oleadas'
+      ? 'Oleada 1 — Máx. 5 armas distintas · Moto con gasolina, chalecos y heridas activas'
       : null
   );
   const [activeWeaponId, setActiveWeaponId] = useState<WeaponId>(initialWeaponId);
   const [unlockedWeapons, setUnlockedWeapons] = useState<WeaponId[]>(initialUnlocked);
+  const [pendingWeaponOffer, setPendingWeaponOffer] = useState<{
+    weaponId: WeaponId;
+    sourceLabel: string;
+    scrapCost?: number;
+    worldDropId?: string;
+  } | null>(null);
   const [ownedAttachments, setOwnedAttachments] = useState<string[]>(
     mode === 'practice' ? ATTACHMENTS.map((a) => a.id) : progression.ownedAttachments
   );
@@ -420,7 +549,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const [muted, setMuted] = useState(soundEngine.muted);
   const [gameOver, setGameOver] = useState(false);
 
-  // Modals: Mesa de Trabajo [B] & Inventario [I]
+  // Modals: Mesa de Trabajo [B] & Mochila [I]
   const [showArmory, setShowArmory] = useState(false);
   const [armoryTab, setArmoryTab] = useState<'armas' | 'accesorios' | 'cajas'>('armas');
   const [armoryCategory, setArmoryCategory] = useState<WeaponCategory | 'Todas'>('Todas');
@@ -430,10 +559,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const [lastMatchCrateResult, setLastMatchCrateResult] = useState<CrateRollResult | null>(null);
   const [showInventory, setShowInventory] = useState(false);
   const [drivingVehicle, setDrivingVehicle] = useState<{
+    type: VehicleType;
     name: string;
     speedKmh: number;
     hp: number;
     maxHp: number;
+    fuel: number;
+    maxFuel: number;
     headlights: boolean;
   } | null>(null);
 
@@ -473,6 +605,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
     hp: armorStats.maxHp,
     maxHp: armorStats.maxHp,
     stamina: 100,
+    vestTier: (mode === 'practice' ? 'tactical' : 'none') as VestTier,
+    armorShield: mode === 'practice' ? 90 : 0,
+    armorShieldMax: mode === 'practice' ? 90 : 0,
+    bandages: mode === 'practice' ? 99 : 2,
+    fuelCans: mode === 'practice' ? 99 : 1,
+    woundType: 'none' as WoundType,
+    woundUntil: 0,
     scrap: mode === 'survival' ? 120 : 9999,
     medkits: mode === 'survival' ? 1 : 3,
     stones: 5,
@@ -532,9 +671,12 @@ export const GameArena: React.FC<GameArenaProps> = ({
     throwGrenadeRequested: false,
     placeTrapRequested: false,
     interactRequested: false,
+    refuelRequested: false,
     resetTargetsRequested: false,
     rebuildWeaponRequested: false,
     restartRequested: false,
+    pendingWorldDropWeapons: [] as WeaponId[],
+    collectWorldDropId: null as string | null,
     drivingVehicleId: null as string | null,
     toggleHeadlightsRequested: false,
     hornRequested: false,
@@ -571,7 +713,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
   }, [isCrouching]);
 
   useEffect(() => {
-    const anyModal = showArmory || showInventory;
+    const anyModal = showArmory || showInventory || Boolean(pendingWeaponOffer);
     engineRef.current.modalOpen = anyModal;
     if (anyModal) {
       engineRef.current.isAds = false;
@@ -581,7 +723,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
         document.exitPointerLock();
       }
     }
-  }, [showArmory, showInventory]);
+  }, [showArmory, showInventory, pendingWeaponOffer]);
 
   useEffect(() => {
     engineRef.current.chatOpen = chatOpen;
@@ -593,11 +735,22 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const wsRef = useRef<WebSocket | null>(null);
   const myPlayerIdRef = useRef<string>('');
   const toastTimerRef = useRef<number>(0);
+  const woundBannerTimerRef = useRef<number>(0);
 
   const showLootToast = (msg: string) => {
     setLootToast(msg);
     clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setLootToast(null), 2800);
+  };
+
+  const triggerWoundAlert = (type: WoundType) => {
+    clearTimeout(woundBannerTimerRef.current);
+    if (type === 'none') {
+      setWoundBanner(null);
+      return;
+    }
+    setWoundBanner({ type, text: WOUND_META[type].message });
+    woundBannerTimerRef.current = window.setTimeout(() => setWoundBanner(null), 4500);
   };
 
   const awardCredits = (amount: number) => {
@@ -717,19 +870,238 @@ export const GameArena: React.FC<GameArenaProps> = ({
     if (eng.gameOver) return;
     if (eng.medkits <= 0) {
       soundEngine.playEmptyClick();
-      showLootToast('Sin botiquines en inventario');
+      showLootToast('Sin botiquines en la mochila');
       return;
     }
-    if (eng.hp >= eng.maxHp) {
-      showLootToast('Salud al máximo');
+    if (eng.hp >= eng.maxHp && eng.woundType === 'none') {
+      showLootToast('Salud al máximo y sin heridas');
       return;
     }
     eng.medkits -= 1;
     eng.hp = Math.min(eng.maxHp, eng.hp + 50);
+    const hadWound = eng.woundType !== 'none';
+    eng.woundType = 'none';
+    eng.woundUntil = 0;
+    setWoundType('none');
+    setWoundBanner(null);
     setMedkits(eng.medkits);
-    setHp(eng.hp);
+    setHp(Number(eng.hp.toFixed(1)));
     soundEngine.playPickup();
-    showLootToast('+50 Salud restaurada con Botiquín');
+    showLootToast(
+      hadWound ? '+50 PS restaurados y herida curada con Botiquín' : '+50 Salud restaurada con Botiquín'
+    );
+  };
+
+  const useBandage = () => {
+    const eng = engineRef.current;
+    if (eng.gameOver) return;
+    if (mode !== 'practice' && eng.bandages <= 0) {
+      soundEngine.playEmptyClick();
+      showLootToast('Sin vendas — saquea en el mapa o fabrica en Mesa [B]');
+      return;
+    }
+    if (eng.woundType === 'none' && eng.hp >= eng.maxHp) {
+      showLootToast('No tienes heridas ni sangrado activo');
+      return;
+    }
+    if (mode !== 'practice') {
+      eng.bandages -= 1;
+      setBandages(eng.bandages);
+    }
+    const curedLabel = eng.woundType !== 'none' ? WOUND_META[eng.woundType].label : 'Limpieza';
+    eng.woundType = 'none';
+    eng.woundUntil = 0;
+    eng.hp = Math.min(eng.maxHp, eng.hp + 15);
+    setWoundType('none');
+    setWoundBanner(null);
+    setHp(Number(eng.hp.toFixed(1)));
+    soundEngine.playPickup();
+    showLootToast(`Venda aplicada (${curedLabel} curada · +15 PS)`);
+  };
+
+  const triggerRefuelVehicle = () => {
+    if (engineRef.current.gameOver) return;
+    engineRef.current.refuelRequested = true;
+  };
+
+  const equipFoundVest = (tier: VestTier) => {
+    const eng = engineRef.current;
+    const spec = VEST_CATALOG[tier];
+    if (tier === 'none') return;
+    const curRank = VEST_TIER_ORDER[eng.vestTier];
+    const newRank = VEST_TIER_ORDER[tier];
+    if (newRank >= curRank) {
+      eng.vestTier = tier;
+      eng.armorShieldMax = spec.maxShield;
+      eng.armorShield = spec.maxShield;
+      setVestTier(tier);
+      setArmorShieldMax(spec.maxShield);
+      setArmorShield(spec.maxShield);
+      showLootToast(`¡Equipado ${spec.label} (+${spec.maxShield} Blindaje)!`);
+    } else {
+      const repairAmount = Math.round(spec.maxShield * 0.65);
+      eng.armorShield = Math.min(eng.armorShieldMax, eng.armorShield + repairAmount);
+      setArmorShield(Math.round(eng.armorShield));
+      showLootToast(`Placas de ${spec.label} reparan tu blindaje (+${repairAmount})`);
+    }
+  };
+
+  const grantWeaponIntoSlot = (newId: WeaponId, replaceId?: WeaponId): boolean => {
+    const eng = engineRef.current;
+    if (eng.unlockedWeapons.has(newId)) return false;
+
+    const slots = Array.from(eng.unlockedWeapons);
+    if (replaceId && slots.includes(replaceId)) {
+      const idx = slots.indexOf(replaceId);
+      slots[idx] = newId;
+      if (mode === 'survival') {
+        eng.pendingWorldDropWeapons.push(replaceId);
+      }
+    } else {
+      if (slots.length >= MAX_WEAPON_SLOTS) return false;
+      slots.push(newId);
+    }
+
+    eng.unlockedWeapons = new Set<WeaponId>(slots.slice(0, MAX_WEAPON_SLOTS));
+    setUnlockedWeapons(Array.from(eng.unlockedWeapons));
+
+    const eff = computeEffectiveWeaponStats(newId, eng.weaponAttachments[newId]);
+    eng.ammo[newId] = {
+      mag: eff.magSize,
+      reserve: Math.min(eff.reserveMax, (eng.ammo[newId]?.reserve || 0) + eff.magSize),
+    };
+    setAmmoState({ ...eng.ammo });
+
+    if (mode !== 'practice') {
+      const prog = progressionRef.current;
+      if (!prog.ownedWeapons.includes(newId)) {
+        const nextProg: PlayerProgression = {
+          ...prog,
+          ownedWeapons: [...prog.ownedWeapons, newId],
+        };
+        progressionRef.current = nextProg;
+        onUpdateProgression(nextProg);
+      }
+    }
+
+    eng.activeWeaponId = newId;
+    eng.isReloading = false;
+    eng.extraZoom = false;
+    if (WEAPON_MAP[newId]?.isMelee) {
+      eng.isAds = false;
+      setIsAds(false);
+    }
+    eng.rebuildWeaponRequested = true;
+    setExtraZoom(false);
+    setIsReloading(false);
+    setActiveWeaponId(newId);
+    return true;
+  };
+
+  const acquireOrPromptWeapon = (
+    newId: WeaponId,
+    sourceLabel: string,
+    opts?: { scrapCost?: number; worldDropId?: string }
+  ): 'added' | 'duplicate' | 'prompted' => {
+    const eng = engineRef.current;
+    const wSpec = WEAPON_MAP[newId];
+    const eff = computeEffectiveWeaponStats(newId, eng.weaponAttachments[newId]);
+
+    // Strictly forbid duplicate weapons
+    if (eng.unlockedWeapons.has(newId)) {
+      if (wSpec.isMelee) {
+        eng.scrap += 40;
+        setScrap(eng.scrap);
+        showLootToast(`Ya tienes ${wSpec.name} (sin duplicados) · +40 Chatarra`);
+      } else {
+        eng.ammo[newId].reserve = Math.min(eff.reserveMax, eng.ammo[newId].reserve + eff.magSize);
+        setAmmoState({ ...eng.ammo });
+        showLootToast(`Ya llevas ${wSpec.name} (sin duplicados) · +${eff.magSize} Balas`);
+      }
+      return 'duplicate';
+    }
+
+    if (eng.unlockedWeapons.size < MAX_WEAPON_SLOTS) {
+      grantWeaponIntoSlot(newId);
+      soundEngine.playPickup();
+      return 'added';
+    }
+
+    // 5/5 slots full: open swap/drop choice modal
+    setShowArmory(false);
+    setShowInventory(false);
+    setPendingWeaponOffer({
+      weaponId: newId,
+      sourceLabel,
+      scrapCost: opts?.scrapCost,
+      worldDropId: opts?.worldDropId,
+    });
+    return 'prompted';
+  };
+
+  const confirmSwapPendingWeapon = (dropOldId: WeaponId) => {
+    if (!pendingWeaponOffer) return;
+    const eng = engineRef.current;
+    const { weaponId, scrapCost, worldDropId } = pendingWeaponOffer;
+    if (scrapCost && scrapCost > 0) {
+      if (eng.scrap < scrapCost) {
+        soundEngine.playEmptyClick();
+        setPendingWeaponOffer(null);
+        return;
+      }
+      eng.scrap -= scrapCost;
+      setScrap(eng.scrap);
+    }
+    if (worldDropId) {
+      eng.collectWorldDropId = worldDropId;
+    }
+    grantWeaponIntoSlot(weaponId, dropOldId);
+    soundEngine.playPickup();
+    showLootToast(
+      `Botaste ${WEAPON_MAP[dropOldId].name} y equipaste ${WEAPON_MAP[weaponId].name} [${WEAPON_MAP[weaponId].rarity}]`
+    );
+    setPendingWeaponOffer(null);
+  };
+
+  const rejectPendingWeapon = () => {
+    if (!pendingWeaponOffer) return;
+    const eng = engineRef.current;
+    const { weaponId, scrapCost, worldDropId } = pendingWeaponOffer;
+    // If came from a crate/boss/mystery box (not ground drop and not unpurchased shop weapon), leave it on the ground!
+    if (!worldDropId && !scrapCost && mode === 'survival') {
+      eng.pendingWorldDropWeapons.push(weaponId);
+      showLootToast(`Dejaste ${WEAPON_MAP[weaponId].name} en el suelo (Mochila 5/5)`);
+    } else {
+      showLootToast(`Dejaste ${WEAPON_MAP[weaponId].name} (Inventario 5/5)`);
+    }
+    setPendingWeaponOffer(null);
+  };
+
+  const dropCarriedWeapon = (id: WeaponId) => {
+    const eng = engineRef.current;
+    if (!eng.unlockedWeapons.has(id)) return;
+    if (eng.unlockedWeapons.size <= 1) {
+      soundEngine.playEmptyClick();
+      showLootToast('Debes conservar al menos 1 arma en tu mochila');
+      return;
+    }
+    const nextSlots = Array.from(eng.unlockedWeapons).filter((wid) => wid !== id);
+    eng.unlockedWeapons = new Set<WeaponId>(nextSlots);
+    setUnlockedWeapons(nextSlots);
+    if (mode === 'survival') {
+      eng.pendingWorldDropWeapons.push(id);
+    }
+    if (eng.activeWeaponId === id && nextSlots[0]) {
+      eng.activeWeaponId = nextSlots[0];
+      eng.isReloading = false;
+      eng.extraZoom = false;
+      eng.rebuildWeaponRequested = true;
+      setActiveWeaponId(nextSlots[0]);
+      setIsReloading(false);
+      setExtraZoom(false);
+    }
+    soundEngine.playReload();
+    showLootToast(`Botaste ${WEAPON_MAP[id].name} al suelo (${nextSlots.length}/${MAX_WEAPON_SLOTS})`);
   };
 
   const buyOrEquipWeapon = (id: WeaponId) => {
@@ -744,15 +1116,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
       soundEngine.playEmptyClick();
       return;
     }
+    if (eng.unlockedWeapons.size >= MAX_WEAPON_SLOTS) {
+      acquireOrPromptWeapon(id, 'Mesa de Trabajo', { scrapCost: spec.cost });
+      return;
+    }
     eng.scrap -= spec.cost;
     setScrap(eng.scrap);
-    eng.unlockedWeapons.add(id);
-    setUnlockedWeapons(Array.from(eng.unlockedWeapons));
-    const eff = computeEffectiveWeaponStats(id, eng.weaponAttachments[id]);
-    eng.ammo[id] = { mag: eff.magSize, reserve: eff.magSize };
-    setAmmoState({ ...eng.ammo });
+    grantWeaponIntoSlot(id);
     soundEngine.playPickup();
-    switchWeapon(id);
     showLootToast(`Compraste ${spec.name}`);
   };
 
@@ -869,29 +1240,11 @@ export const GameArena: React.FC<GameArenaProps> = ({
       soundEngine.playCrateOpen();
       const wonId = res.wonWeapon;
       const wonSpec = WEAPON_MAP[wonId];
-      if (!eng.unlockedWeapons.has(wonId)) {
-        eng.unlockedWeapons.add(wonId);
-        setUnlockedWeapons(Array.from(eng.unlockedWeapons));
-      }
-      const eff = computeEffectiveWeaponStats(wonId, eng.weaponAttachments[wonId]);
-      eng.ammo[wonId] = {
-        mag: eff.magSize,
-        reserve: Math.min(eff.reserveMax, (eng.ammo[wonId]?.reserve || 0) + eff.magSize),
-      };
-      setAmmoState({ ...eng.ammo });
-      switchWeapon(wonId);
-      showLootToast(`¡Caja [${wonSpec.rarity}]: Ganaste ${wonSpec.name}!`);
-
-      if (mode !== 'practice') {
-        const prog = progressionRef.current;
-        if (!prog.ownedWeapons.includes(wonId)) {
-          const nextProg: PlayerProgression = {
-            ...prog,
-            ownedWeapons: [...prog.ownedWeapons, wonId],
-          };
-          progressionRef.current = nextProg;
-          onUpdateProgression(nextProg);
-        }
+      const outcome = acquireOrPromptWeapon(wonId, `Caja Aleatoria (${cfg.label})`);
+      if (outcome === 'added') {
+        showLootToast(`¡Caja [${wonSpec.rarity}]: Ganaste ${wonSpec.name}!`);
+      } else if (outcome === 'prompted') {
+        showLootToast(`¡Caja [${wonSpec.rarity}]: Salió ${wonSpec.name}! Elige qué botar o dejar`);
       }
     } else {
       soundEngine.playEmptyClick();
@@ -932,7 +1285,48 @@ export const GameArena: React.FC<GameArenaProps> = ({
     setScrap(eng.scrap);
     setMedkits(eng.medkits);
     soundEngine.playPickup();
-    showLootToast('Botiquín portátil añadido al Inventario [I]');
+    showLootToast('Botiquín portátil añadido a la Mochila [I]');
+  };
+
+  const craftBandage = () => {
+    const eng = engineRef.current;
+    if (eng.scrap < 45 || eng.bandages >= 8) {
+      soundEngine.playEmptyClick();
+      return;
+    }
+    eng.scrap -= 45;
+    eng.bandages += 1;
+    setScrap(eng.scrap);
+    setBandages(eng.bandages);
+    soundEngine.playPickup();
+    showLootToast('+1 Venda añadida a la Mochila [N]');
+  };
+
+  const craftFuelCan = () => {
+    const eng = engineRef.current;
+    if (eng.scrap < 55 || eng.fuelCans >= 5) {
+      soundEngine.playEmptyClick();
+      return;
+    }
+    eng.scrap -= 55;
+    eng.fuelCans += 1;
+    setScrap(eng.scrap);
+    setFuelCans(eng.fuelCans);
+    soundEngine.playPickup();
+    showLootToast('+1 Bidón de Gasolina añadido a la Mochila [U]');
+  };
+
+  const craftVestTier = (tier: VestTier) => {
+    const eng = engineRef.current;
+    const spec = VEST_CATALOG[tier];
+    if (tier === 'none' || eng.scrap < spec.scrapCost) {
+      soundEngine.playEmptyClick();
+      return;
+    }
+    eng.scrap -= spec.scrapCost;
+    setScrap(eng.scrap);
+    equipFoundVest(tier);
+    soundEngine.playPickup();
   };
 
   const gatherStonesCraft = () => {
@@ -1002,6 +1396,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
     const eng = engineRef.current;
     eng.hp = eng.maxHp;
     eng.stamina = 100;
+    eng.vestTier = 'none';
+    eng.armorShield = 0;
+    eng.armorShieldMax = 0;
+    eng.bandages = 2;
+    eng.fuelCans = 1;
+    eng.woundType = 'none';
+    eng.woundUntil = 0;
     eng.scrap = 120;
     eng.medkits = 1;
     eng.stones = 5;
@@ -1014,18 +1415,31 @@ export const GameArena: React.FC<GameArenaProps> = ({
     eng.bossesDefeated = 0;
     eng.gameOver = false;
     eng.drivingVehicleId = null;
+    eng.pendingWorldDropWeapons = [];
+    eng.collectWorldDropId = null;
     eng.restartRequested = true;
+    setPendingWeaponOffer(null);
     setDrivingVehicle(null);
+    setVestTier('none');
+    setArmorShield(0);
+    setArmorShieldMax(0);
+    setBandages(2);
+    setFuelCans(1);
+    setWoundType('none');
+    setWoundBanner(null);
     eng.pos.set(0, 0, 0);
     eng.velY = 0;
     const validStarter: WeaponId = progressionRef.current.ownedWeapons.includes(character.starterWeaponId)
       ? character.starterWeaponId
       : 'p9_tactical';
-    const starterReset = Array.from(new Set<WeaponId>(['knife_combat', 'p9_tactical', validStarter]));
+    const starterReset = Array.from(new Set<WeaponId>(['p9_tactical', 'knife_combat', validStarter])).slice(
+      0,
+      MAX_WEAPON_SLOTS
+    );
     eng.unlockedWeapons = new Set<WeaponId>(starterReset);
     setUnlockedWeapons(starterReset);
-    eng.activeWeaponId = validStarter;
-    setActiveWeaponId(validStarter);
+    eng.activeWeaponId = starterReset.includes(validStarter) ? validStarter : starterReset[0];
+    setActiveWeaponId(eng.activeWeaponId);
     eng.rebuildWeaponRequested = true;
 
     WEAPONS.forEach((w) => {
@@ -1048,7 +1462,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
     setActiveBoss(null);
     setAmmoState({ ...eng.ammo });
     setGameOver(false);
-    setWaveBanner('Oleada 1 — Empieza con pistola común; busca armas aleatorias en cajas (máx. Épica) · Jefe cada 5 oleadas');
+    setWaveBanner('Oleada 1 — Máx. 5 armas distintas · Moto con gasolina, chalecos y heridas activas');
     window.setTimeout(() => setWaveBanner(null), 3600);
   };
 
@@ -1228,8 +1642,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
       });
     };
 
-    const spawnPickup = (pos: THREE.Vector3, kind: PickupKind) => {
+    const spawnPickup = (pos: THREE.Vector3, kind: PickupKind, vestTierArg?: VestTier) => {
       const g = new THREE.Group();
+      let resolvedVestTier: VestTier | undefined = vestTierArg;
+
       if (kind === 'stones') {
         const rockMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.9 });
         for (let i = 0; i < 3; i++) {
@@ -1249,6 +1665,84 @@ export const GameArena: React.FC<GameArenaProps> = ({
         halo.rotation.x = -Math.PI / 2;
         halo.position.y = 0.04;
         g.add(halo);
+      } else if (kind === 'vest') {
+        if (!resolvedVestTier || resolvedVestTier === 'none') {
+          const r = Math.random();
+          resolvedVestTier = r < 0.42 ? 'light' : r < 0.74 ? 'tactical' : r < 0.92 ? 'heavy' : 'juggernaut';
+        }
+        const vColor = VEST_CATALOG[resolvedVestTier].meshColor;
+        const vestMat = new THREE.MeshStandardMaterial({
+          color: 0x1e293b,
+          roughness: 0.45,
+          metalness: 0.45,
+        });
+        const plateMat = new THREE.MeshStandardMaterial({
+          color: vColor,
+          emissive: vColor,
+          emissiveIntensity: 0.55,
+          roughness: 0.3,
+          metalness: 0.65,
+        });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.5, 0.24), vestMat);
+        body.position.y = 0.36;
+        const frontPlate = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.27), plateMat);
+        frontPlate.position.y = 0.36;
+        const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.22), vestMat);
+        strapL.position.set(-0.15, 0.64, 0);
+        const strapR = strapL.clone();
+        strapR.position.x = 0.15;
+        const halo = new THREE.Mesh(
+          new THREE.RingGeometry(0.34, 0.44, 20),
+          new THREE.MeshBasicMaterial({ color: vColor, side: THREE.DoubleSide })
+        );
+        halo.rotation.x = -Math.PI / 2;
+        halo.position.y = 0.04;
+        g.add(body, frontPlate, strapL, strapR, halo);
+      } else if (kind === 'bandage') {
+        const roll = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.14, 0.14, 0.36, 12),
+          new THREE.MeshStandardMaterial({ color: 0xf8fafc, emissive: 0x334155, emissiveIntensity: 0.3, roughness: 0.6 })
+        );
+        roll.rotation.z = Math.PI / 2;
+        roll.position.y = 0.26;
+        const stripe = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.146, 0.146, 0.1, 12),
+          new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xdc2626, emissiveIntensity: 0.7 })
+        );
+        stripe.rotation.z = Math.PI / 2;
+        stripe.position.y = 0.26;
+        const halo = new THREE.Mesh(
+          new THREE.RingGeometry(0.28, 0.36, 16),
+          new THREE.MeshBasicMaterial({ color: 0xf87171, side: THREE.DoubleSide })
+        );
+        halo.rotation.x = -Math.PI / 2;
+        halo.position.y = 0.04;
+        g.add(roll, stripe, halo);
+      } else if (kind === 'fuel') {
+        const canMat = new THREE.MeshStandardMaterial({
+          color: 0xdc2626,
+          emissive: 0x991b1b,
+          emissiveIntensity: 0.45,
+          roughness: 0.38,
+          metalness: 0.55,
+        });
+        const can = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.44, 0.22), canMat);
+        can.position.y = 0.28;
+        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.06, 0.1), canMat);
+        handle.position.set(-0.04, 0.52, 0);
+        const spout = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.032, 0.04, 0.16, 8),
+          new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.4 })
+        );
+        spout.position.set(0.14, 0.53, 0);
+        spout.rotation.z = -0.45;
+        const halo = new THREE.Mesh(
+          new THREE.RingGeometry(0.3, 0.39, 18),
+          new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide })
+        );
+        halo.rotation.x = -Math.PI / 2;
+        halo.position.y = 0.04;
+        g.add(can, handle, spout, halo);
       } else {
         const colorHex =
           kind === 'medkit'
@@ -1274,7 +1768,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
       g.position.set(pos.x, 0, pos.z);
       resolveCircleAABBCollisions(g.position, 0.5, arena.colliders, arena.arenaRadius);
       scene.add(g);
-      pickups.push({ mesh: g, kind, life: 9999 });
+      pickups.push({ mesh: g, kind, vestTier: resolvedVestTier, life: 9999 });
     };
 
     if (mode === 'practice') {
@@ -1295,7 +1789,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
         });
       });
 
-      const kinds: PickupKind[] = ['ammo', 'scrap', 'stones', 'medkit', 'grenade', 'trap'];
+      const kinds: PickupKind[] = ['ammo', 'scrap', 'vest', 'bandage', 'fuel', 'medkit', 'grenade', 'stones', 'trap'];
       arena.lootSpawns.forEach((pos, idx) => {
         spawnPickup(pos, kinds[idx % kinds.length]);
       });
@@ -1335,10 +1829,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
           accel: vs.accel,
           hp: vs.maxHp,
           maxHp: vs.maxHp,
+          fuel: vs.type === 'moto' ? 78 : 85,
+          maxFuel: 100,
           steerAngle: 0,
           headlightsOn: false,
           lastHornAt: 0,
           lastRamAt: 0,
+          lastEmptyFuelToastAt: 0,
+          lowFuelWarned: false,
         });
       });
     }
@@ -1696,7 +2194,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
           setHp(sp.hp);
           setMaxHp(sp.maxHp);
           if (rm.subMode === 'pvp') {
-            const ownedList = Array.from(new Set<WeaponId>(progressionRef.current.ownedWeapons));
+            const ownedList = Array.from(new Set<WeaponId>(progressionRef.current.ownedWeapons)).slice(
+              0,
+              MAX_WEAPON_SLOTS
+            );
             engineRef.current.unlockedWeapons = new Set<WeaponId>(ownedList);
             setUnlockedWeapons(ownedList);
           }
@@ -1859,6 +2360,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
       if (e.code === 'KeyT') triggerPlaceTrap();
       if (e.code === 'KeyY') cycleTrapType();
       if (e.code === 'KeyH') usePortableMedkit();
+      if (e.code === 'KeyN') useBandage();
+      if (e.code === 'KeyU') triggerRefuelVehicle();
       if (e.code === 'KeyE') {
         engineRef.current.interactRequested = true;
       }
@@ -1929,16 +2432,11 @@ export const GameArena: React.FC<GameArenaProps> = ({
         Digit3: 2,
         Digit4: 3,
         Digit5: 4,
-        Digit6: 5,
-        Digit7: 6,
-        Digit8: 7,
-        Digit9: 8,
-        Digit0: 9,
       };
       if (e.code in digitMap) {
-        const unlockedList = WEAPONS.filter((w) => engineRef.current.unlockedWeapons.has(w.id));
-        const w = unlockedList[digitMap[e.code]];
-        if (w) switchWeapon(w.id);
+        const slotList = Array.from(engineRef.current.unlockedWeapons);
+        const wId = slotList[digitMap[e.code]];
+        if (wId) switchWeapon(wId);
       }
     };
 
@@ -1993,11 +2491,11 @@ export const GameArena: React.FC<GameArenaProps> = ({
 
     const onWheel = (e: WheelEvent) => {
       if (document.pointerLockElement !== canvas) return;
-      const unlocked = WEAPONS.filter((w) => engineRef.current.unlockedWeapons.has(w.id));
+      const unlocked = Array.from(engineRef.current.unlockedWeapons);
       if (unlocked.length <= 1) return;
-      const idx = unlocked.findIndex((w) => w.id === engineRef.current.activeWeaponId);
-      const next = (idx + (e.deltaY > 0 ? 1 : -1) + unlocked.length) % unlocked.length;
-      switchWeapon(unlocked[next].id);
+      const idx = unlocked.indexOf(engineRef.current.activeWeaponId);
+      const next = (Math.max(0, idx) + (e.deltaY > 0 ? 1 : -1) + unlocked.length) % unlocked.length;
+      switchWeapon(unlocked[next]);
     };
 
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -2033,6 +2531,72 @@ export const GameArena: React.FC<GameArenaProps> = ({
     const raycaster = new THREE.Raycaster();
     let muzzleFlashHideAt = 0;
 
+    const applyPlayerDamage = (
+      baseDmg: number,
+      cause: 'melee' | 'acid' | 'toxic',
+      isBossHit = false
+    ) => {
+      const eng = engineRef.current;
+      if (eng.gameOver) return;
+
+      let finalDmg = baseDmg;
+      if (eng.armorShield > 0 && eng.vestTier !== 'none') {
+        const vSpec = VEST_CATALOG[eng.vestTier];
+        const absorbed = Math.min(
+          eng.armorShield,
+          Math.max(1, Math.round(baseDmg * (0.42 + vSpec.dmgReduction * 0.65)))
+        );
+        eng.armorShield = Math.max(0, eng.armorShield - absorbed);
+        finalDmg = Math.max(1, Math.round(baseDmg * (1 - vSpec.dmgReduction) - absorbed * 0.2));
+        setArmorShield(Math.round(eng.armorShield));
+        if (eng.armorShield <= 0) {
+          showLootToast('¡Tu chaleco táctico quedó destrozado! Busca otro chaleco');
+        }
+      }
+
+      eng.hp = Math.max(0, eng.hp - finalDmg);
+      setHp(Number(eng.hp.toFixed(1)));
+      soundEngine.playHurt();
+      setDamageFlash(true);
+      window.setTimeout(() => setDamageFlash(false), 180);
+
+      if (eng.hp > 0) {
+        let rolledWound: WoundType = 'superficial';
+        if (cause === 'melee') {
+          const r = Math.random();
+          const biteChance = eng.armorShield > 0 ? 0.14 : isBossHit ? 0.38 : 0.28;
+          const bleedChance = eng.armorShield > 0 ? 0.36 : 0.42;
+          if (r < biteChance) rolledWound = 'bite';
+          else if (r < biteChance + bleedChance) rolledWound = 'bleeding';
+          else rolledWound = 'superficial';
+        } else if (cause === 'acid') {
+          rolledWound = Math.random() < 0.45 ? 'bleeding' : 'superficial';
+        } else {
+          rolledWound = 'superficial';
+        }
+
+        const severity: Record<WoundType, number> = { none: 0, superficial: 1, bleeding: 2, bite: 3 };
+        if (severity[rolledWound] >= severity[eng.woundType]) {
+          eng.woundType = rolledWound;
+          if (rolledWound === 'superficial') {
+            eng.woundUntil = performance.now() + 9000;
+          }
+          setWoundType(rolledWound);
+          triggerWoundAlert(rolledWound);
+        }
+      }
+
+      if (eng.hp <= 0) {
+        eng.hp = 0;
+        setHp(0);
+        eng.gameOver = true;
+        setGameOver(true);
+        if (document.pointerLockElement === canvas) {
+          document.exitPointerLock();
+        }
+      }
+    };
+
     const explodeAt = (center: THREE.Vector3, radius: number, maxDmg: number, isToxic = false) => {
       soundEngine.playExplosion();
       spawnParticles(center, isToxic ? 0x84cc16 : 0xf97316, 18, 8.5);
@@ -2056,15 +2620,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
         const pDist = engineRef.current.pos.distanceTo(center);
         if (pDist <= radius) {
           const pDmg = Math.round(28 * (1 - (pDist / radius) * 0.55));
-          engineRef.current.hp = Math.max(0, engineRef.current.hp - pDmg);
-          setHp(engineRef.current.hp);
-          soundEngine.playHurt();
-          setDamageFlash(true);
-          window.setTimeout(() => setDamageFlash(false), 180);
-          if (engineRef.current.hp <= 0) {
-            engineRef.current.gameOver = true;
-            setGameOver(true);
-          }
+          applyPlayerDamage(pDmg, 'toxic');
         }
       }
 
@@ -2167,35 +2723,36 @@ export const GameArena: React.FC<GameArenaProps> = ({
         const rewardWeaponId = pickBossRewardWeapon(Array.from(engineRef.current.unlockedWeapons));
         if (rewardWeaponId) {
           const rw = WEAPON_MAP[rewardWeaponId];
-          const rwEff = computeEffectiveWeaponStats(rewardWeaponId, engineRef.current.weaponAttachments[rewardWeaponId]);
-          engineRef.current.unlockedWeapons.add(rewardWeaponId);
-          setUnlockedWeapons(Array.from(engineRef.current.unlockedWeapons));
-          engineRef.current.ammo[rewardWeaponId] = { mag: rwEff.magSize, reserve: rwEff.magSize };
-          setAmmoState({ ...engineRef.current.ammo });
-          const prog = progressionRef.current;
-          if (!prog.ownedWeapons.includes(rewardWeaponId)) {
-            const nextProg: PlayerProgression = {
-              ...prog,
-              ownedWeapons: [...prog.ownedWeapons, rewardWeaponId],
-            };
-            progressionRef.current = nextProg;
-            onUpdateProgression(nextProg);
+          const outcome = acquireOrPromptWeapon(rewardWeaponId, `Botín de Jefe: ${bossName}`);
+          if (outcome === 'added') {
+            showLootToast(`¡Botín de Jefe [${rw.rarity}]: Desbloqueaste ${rw.name} (+${scrapGain} Chatarra)!`);
+          } else if (outcome === 'prompted') {
+            showLootToast(`¡Botín de Jefe [${rw.rarity}]: ${rw.name}! Elige qué botar o dejar`);
           }
-          showLootToast(`¡Botín de Jefe [${rw.rarity}]: Desbloqueaste ${rw.name} (+${scrapGain} Chatarra)!`);
         } else {
           showLootToast(`¡${bossName} derrotado! +${scrapGain} Chatarra · El próximo jefe será más difícil`);
         }
-        (['ammo', 'medkit', 'grenade', 'trap'] as PickupKind[]).forEach((pkKind, idx) => {
-          const offset = new THREE.Vector3(Math.cos(idx * 1.57) * 1.4, 0, Math.sin(idx * 1.57) * 1.4);
-          spawnPickup(pos.clone().add(offset), pkKind);
+        (['ammo', 'medkit', 'vest', 'bandage', 'fuel', 'grenade', 'trap'] as PickupKind[]).forEach((pkKind, idx) => {
+          const offset = new THREE.Vector3(Math.cos(idx * 0.9) * 1.5, 0, Math.sin(idx * 0.9) * 1.5);
+          spawnPickup(pos.clone().add(offset), pkKind, pkKind === 'vest' ? 'heavy' : undefined);
         });
       } else {
         if (zType === 'bloater') {
           explodeAt(pos.clone().add(new THREE.Vector3(0, 0.9, 0)), 4.6, 55, true);
         }
 
-        if (Math.random() < 0.52) {
-          const dropChoices: PickupKind[] = ['ammo', 'medkit', 'scrap', 'stones', 'grenade', 'trap'];
+        if (Math.random() < 0.56) {
+          const dropChoices: PickupKind[] = [
+            'ammo',
+            'medkit',
+            'scrap',
+            'stones',
+            'grenade',
+            'trap',
+            'bandage',
+            'fuel',
+            'vest',
+          ];
           spawnPickup(pos, dropChoices[Math.floor(Math.random() * dropChoices.length)]);
         }
       }
@@ -2691,12 +3248,53 @@ export const GameArena: React.FC<GameArenaProps> = ({
     let lastCarUiAt = 0;
     let lastCarNoiseAt = 0;
     let lastBossHudSyncAt = 0;
+    let lastWoundUiSyncAt = 0;
 
     const tick = () => {
       if (disposed) return;
       const dt = Math.min(clock.getDelta(), 0.08);
       const nowMs = performance.now();
       const eng = engineRef.current;
+
+      if (eng.collectWorldDropId) {
+        const dropId = eng.collectWorldDropId;
+        eng.collectWorldDropId = null;
+        const idx = weaponDrops.findIndex((w) => w.id === dropId);
+        if (idx >= 0) {
+          const wd = weaponDrops[idx];
+          if (wd.isPlayerDrop) {
+            scene.remove(wd.mesh);
+            disposeObjectTree(wd.mesh);
+            weaponDrops.splice(idx, 1);
+          } else {
+            wd.collected = true;
+            wd.mesh.visible = false;
+            wd.respawnAt = nowMs + 60000;
+          }
+        }
+      }
+
+      while (eng.pendingWorldDropWeapons.length > 0) {
+        const dropWeaponId = eng.pendingWorldDropWeapons.shift()!;
+        const dropPos = new THREE.Vector3(
+          eng.pos.x - Math.sin(eng.yaw) * 1.65,
+          0,
+          eng.pos.z - Math.cos(eng.yaw) * 1.65
+        );
+        resolveCircleAABBCollisions(dropPos, 0.5, arena.colliders, arena.arenaRadius);
+        const dropMesh = buildWeaponPickupMesh(dropWeaponId);
+        dropMesh.position.copy(dropPos);
+        scene.add(dropMesh);
+        weaponDrops.push({
+          id: `pdrop_${nowMs}_${Math.random().toString(36).slice(2, 6)}`,
+          weaponId: dropWeaponId,
+          mesh: dropMesh,
+          pos: dropPos,
+          collected: false,
+          respawnAt: 0,
+          isPlayerDrop: true,
+        });
+      }
 
       if (eng.rebuildWeaponRequested) {
         eng.rebuildWeaponRequested = false;
@@ -2829,19 +3427,83 @@ export const GameArena: React.FC<GameArenaProps> = ({
         setAmmoState({ ...eng.ammo });
       }
 
-      if (!eng.gameOver && armorStats.regenPerSec > 0 && eng.hp < eng.maxHp) {
+      if (!eng.gameOver && armorStats.regenPerSec > 0 && eng.hp < eng.maxHp && eng.woundType === 'none') {
         regenAccum += armorStats.regenPerSec * dt;
         if (regenAccum >= 1) {
           const heal = Math.floor(regenAccum);
           regenAccum -= heal;
           eng.hp = Math.min(eng.maxHp, eng.hp + heal);
-          setHp(eng.hp);
+          setHp(Number(eng.hp.toFixed(1)));
+        }
+      }
+
+      // Active Wounds DoT: Herida Superficial (0/s), Sangrado (-0.1 HP/s), Mordisco (-1.0 HP/s)
+      if (!eng.gameOver && eng.woundType !== 'none') {
+        if (eng.woundType === 'superficial') {
+          if (nowMs >= eng.woundUntil) {
+            eng.woundType = 'none';
+            setWoundType('none');
+            setWoundBanner(null);
+          }
+        } else {
+          const ratePerSec = eng.woundType === 'bite' ? 1.0 : 0.1;
+          eng.hp = Math.max(0, eng.hp - ratePerSec * dt);
+          if (nowMs - lastWoundUiSyncAt >= 100) {
+            lastWoundUiSyncAt = nowMs;
+            setHp(Number(eng.hp.toFixed(1)));
+          }
+          if (eng.hp <= 0) {
+            eng.hp = 0;
+            setHp(0);
+            eng.gameOver = true;
+            setGameOver(true);
+            if (document.pointerLockElement === canvas) {
+              document.exitPointerLock();
+            }
+          }
         }
       }
 
       let activeCar = eng.drivingVehicleId ? vehicles.find((v) => v.id === eng.drivingVehicleId) || null : null;
       let isMoving = false;
       let isSprinting = false;
+
+      if (eng.refuelRequested) {
+        eng.refuelRequested = false;
+        const targetVeh =
+          activeCar ||
+          vehicles.find((v) => v.pos.distanceTo(eng.pos) < 4.8) ||
+          null;
+        if (!targetVeh) {
+          showLootToast('Acércate a una moto o vehículo para echar gasolina');
+        } else if (targetVeh.fuel >= targetVeh.maxFuel - 0.5) {
+          showLootToast(`El depósito de ${targetVeh.name} ya está lleno`);
+        } else if (mode !== 'practice' && eng.fuelCans <= 0) {
+          soundEngine.playEmptyClick();
+          showLootToast('Sin bidones de gasolina — busca bidones o fabrica en Mesa [B]');
+        } else {
+          if (mode !== 'practice') {
+            eng.fuelCans -= 1;
+            setFuelCans(eng.fuelCans);
+          }
+          targetVeh.fuel = Math.min(targetVeh.maxFuel, targetVeh.fuel + 60);
+          targetVeh.lowFuelWarned = targetVeh.fuel < 20;
+          soundEngine.playPickup();
+          showLootToast(`+${Math.round(targetVeh.fuel)}% Gasolina cargada en ${targetVeh.name}`);
+          if (targetVeh === activeCar) {
+            setDrivingVehicle({
+              type: activeCar.type,
+              name: activeCar.name,
+              speedKmh: Math.round(Math.abs(activeCar.speed) * 4.5),
+              hp: activeCar.hp,
+              maxHp: activeCar.maxHp,
+              fuel: Math.round(activeCar.fuel),
+              maxFuel: activeCar.maxFuel,
+              headlights: activeCar.headlightsOn,
+            });
+          }
+        }
+      }
 
       if (activeCar && !eng.gameOver && !eng.modalOpen && !eng.chatOpen) {
         eng.isAds = false;
@@ -2882,11 +3544,27 @@ export const GameArena: React.FC<GameArenaProps> = ({
         if (handbrake) {
           activeCar.speed = THREE.MathUtils.damp(activeCar.speed, 0, 7.5, dt);
         } else if (Math.abs(throttle) > 0.05) {
-          const effAccel = activeCar.accel * boostMult;
-          activeCar.speed += throttle * effAccel * dt;
-          const fwdCap = activeCar.maxSpeed * boostMult;
-          const revCap = -activeCar.maxSpeed * 0.42;
-          activeCar.speed = THREE.MathUtils.clamp(activeCar.speed, revCap, fwdCap);
+          if (activeCar.fuel > 0) {
+            const burnRate = activeCar.type === 'moto' ? 2.2 : 1.8;
+            const turboBurn = eng.keys['ShiftLeft'] || eng.keys['ShiftRight'] ? 1.55 : 1.0;
+            activeCar.fuel = Math.max(0, activeCar.fuel - burnRate * turboBurn * dt);
+            if (activeCar.fuel < 20 && !activeCar.lowFuelWarned) {
+              activeCar.lowFuelWarned = true;
+              showLootToast(`¡Gasolina baja en ${activeCar.name}! Pulsa [U] para repostar`);
+            }
+            const effAccel = activeCar.accel * boostMult;
+            activeCar.speed += throttle * effAccel * dt;
+            const fwdCap = activeCar.maxSpeed * boostMult;
+            const revCap = -activeCar.maxSpeed * 0.42;
+            activeCar.speed = THREE.MathUtils.clamp(activeCar.speed, revCap, fwdCap);
+          } else {
+            activeCar.speed = THREE.MathUtils.damp(activeCar.speed, 0, 2.5, dt);
+            if (nowMs - activeCar.lastEmptyFuelToastAt > 2600) {
+              activeCar.lastEmptyFuelToastAt = nowMs;
+              soundEngine.playEmptyClick();
+              showLootToast('¡Depósito vacío (0% Gasolina)! Pulsa [U] para usar un Bidón');
+            }
+          }
         } else {
           activeCar.speed = THREE.MathUtils.damp(activeCar.speed, 0, 1.85, dt);
         }
@@ -2906,7 +3584,12 @@ export const GameArena: React.FC<GameArenaProps> = ({
         activeCar.pos.x += -Math.sin(activeCar.yaw) * stepDist;
         activeCar.pos.z += -Math.cos(activeCar.yaw) * stepDist;
 
-        const hitWall = resolveCircleAABBCollisions(activeCar.pos, 1.78, arena.colliders, arena.arenaRadius - 1.5);
+        const hitWall = resolveCircleAABBCollisions(
+          activeCar.pos,
+          activeCar.type === 'moto' ? 1.05 : 1.78,
+          arena.colliders,
+          arena.arenaRadius - 1.5
+        );
         if (hitWall && Math.abs(activeCar.speed) > 4.2) {
           activeCar.speed *= -0.22;
           soundEngine.playVehicleHit();
@@ -2968,10 +3651,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
         if (nowMs - lastCarUiAt > 80) {
           lastCarUiAt = nowMs;
           setDrivingVehicle({
+            type: activeCar.type,
             name: activeCar.name,
             speedKmh: Math.round(Math.abs(activeCar.speed) * 4.5),
             hp: activeCar.hp,
             maxHp: activeCar.maxHp,
+            fuel: Math.round(activeCar.fuel),
+            maxFuel: activeCar.maxFuel,
             headlights: activeCar.headlightsOn,
           });
         }
@@ -3143,7 +3829,9 @@ export const GameArena: React.FC<GameArenaProps> = ({
       if (activeCar) {
         localPlayerRig.root.visible = false;
         fpWeaponPivot.visible = false;
-        const chaseOffset = new THREE.Vector3(0, 1.45, 6.4).applyQuaternion(_camQuat);
+        const chaseDist = activeCar.type === 'moto' ? 4.4 : 6.4;
+        const chaseHeight = activeCar.type === 'moto' ? 1.25 : 1.45;
+        const chaseOffset = new THREE.Vector3(0, chaseHeight, chaseDist).applyQuaternion(_camQuat);
         const carCenter = new THREE.Vector3(activeCar.pos.x, 1.35, activeCar.pos.z);
         camera.position.copy(carCenter).add(chaseOffset);
         camera.position.y = Math.max(0.95, camera.position.y);
@@ -3314,9 +4002,10 @@ export const GameArena: React.FC<GameArenaProps> = ({
               }
             }
             if (foundNearVehicle) {
+              const fuelPct = Math.round(foundNearVehicle.fuel);
               promptMsg = eng.touchMode
-                ? `Tocar para Conducir ${foundNearVehicle.name}`
-                : `Pulsa [E] para Conducir ${foundNearVehicle.name}`;
+                ? `Tocar para Conducir ${foundNearVehicle.name} (Gas: ${fuelPct}%)`
+                : `Pulsa [E] para Conducir ${foundNearVehicle.name} · Gasolina: ${fuelPct}%`;
             }
           }
         }
@@ -3338,31 +4027,27 @@ export const GameArena: React.FC<GameArenaProps> = ({
             setDrivingVehicle(null);
             showLootToast('Saliste del vehículo');
           } else if (foundNearWeapon && !foundNearWeapon.collected) {
-            foundNearWeapon.collected = true;
-            foundNearWeapon.mesh.visible = false;
-            foundNearWeapon.respawnAt = nowMs + 60000;
-            soundEngine.playPickup();
-
             const wSpec = WEAPON_MAP[foundNearWeapon.weaponId];
-            const eff = computeEffectiveWeaponStats(foundNearWeapon.weaponId, eng.weaponAttachments[foundNearWeapon.weaponId]);
-            if (!eng.unlockedWeapons.has(foundNearWeapon.weaponId)) {
-              eng.unlockedWeapons.add(foundNearWeapon.weaponId);
-              setUnlockedWeapons(Array.from(eng.unlockedWeapons));
-              eng.ammo[foundNearWeapon.weaponId] = { mag: eff.magSize, reserve: eff.magSize };
-              setAmmoState({ ...eng.ammo });
-              switchWeapon(foundNearWeapon.weaponId);
-              showLootToast(`¡Arma [${wSpec.rarity}]: ${wSpec.name} (${wSpec.category})!`);
-            } else if (wSpec.isMelee) {
-              eng.scrap += 35;
-              setScrap(eng.scrap);
-              showLootToast(`Ya llevas ${wSpec.name} · +35 Chatarra al reciclar`);
+            const outcome = acquireOrPromptWeapon(foundNearWeapon.weaponId, 'Arma en el Suelo', {
+              worldDropId: foundNearWeapon.id,
+            });
+            if (outcome !== 'prompted') {
+              if (foundNearWeapon.isPlayerDrop) {
+                const idx = weaponDrops.indexOf(foundNearWeapon);
+                scene.remove(foundNearWeapon.mesh);
+                disposeObjectTree(foundNearWeapon.mesh);
+                if (idx >= 0) weaponDrops.splice(idx, 1);
+              } else {
+                foundNearWeapon.collected = true;
+                foundNearWeapon.mesh.visible = false;
+                foundNearWeapon.respawnAt = nowMs + 60000;
+              }
+              soundEngine.playPickup();
+              if (outcome === 'added') {
+                showLootToast(`¡Arma [${wSpec.rarity}]: ${wSpec.name} (${wSpec.category})!`);
+              }
             } else {
-              eng.ammo[foundNearWeapon.weaponId].reserve = Math.min(
-                eff.reserveMax,
-                eng.ammo[foundNearWeapon.weaponId].reserve + eff.magSize
-              );
-              setAmmoState({ ...eng.ammo });
-              showLootToast(`+${eff.magSize} Balas para ${wSpec.name}`);
+              showLootToast(`Mochila llena (5/5): elige qué arma botar o dejar`);
             }
           } else if (foundNearCrate && !foundNearCrate.opened) {
             foundNearCrate.opened = true;
@@ -3398,6 +4083,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
               eng.medkits += 1;
               setMedkits(eng.medkits);
             }
+            if (eng.bandages < 8 && Math.random() < 0.72) {
+              eng.bandages = Math.min(8, eng.bandages + 1);
+              setBandages(eng.bandages);
+            }
+            if (eng.fuelCans < 5 && Math.random() < 0.55) {
+              eng.fuelCans = Math.min(5, eng.fuelCans + 1);
+              setFuelCans(eng.fuelCans);
+            }
             if (eng.grenadesCount < 6 && Math.random() < 0.65) {
               eng.grenadesCount = Math.min(6, eng.grenadesCount + 1);
               setGrenadesCount(eng.grenadesCount);
@@ -3412,24 +4105,33 @@ export const GameArena: React.FC<GameArenaProps> = ({
               }
             }
 
-            // Physical Military Crates can contain ANY random weapon (via pickWorldCrateWeapon) or attachments/supplies
+            let vestMsg = '';
+            if (Math.random() < 0.52) {
+              const rVest = Math.random();
+              const crateVestTier: VestTier =
+                rVest < 0.42 ? 'light' : rVest < 0.76 ? 'tactical' : rVest < 0.94 ? 'heavy' : 'juggernaut';
+              equipFoundVest(crateVestTier);
+              vestMsg = ` · +${VEST_CATALOG[crateVestTier].label}`;
+            }
+
+            // Physical Military Crates can contain ANY random weapon (capped at Épica, never duplicate)
             const foundCrateWeaponId = pickWorldCrateWeapon(Array.from(eng.unlockedWeapons));
             const lockedAtts = ATTACHMENTS.filter((a) => !eng.ownedAttachments.has(a.id));
             if (foundCrateWeaponId) {
               const foundW = WEAPON_MAP[foundCrateWeaponId];
-              eng.unlockedWeapons.add(foundW.id);
-              setUnlockedWeapons(Array.from(eng.unlockedWeapons));
-              const wEff = computeEffectiveWeaponStats(foundW.id, eng.weaponAttachments[foundW.id]);
-              eng.ammo[foundW.id] = { mag: wEff.magSize, reserve: wEff.magSize };
-              setAmmoState({ ...eng.ammo });
-              showLootToast(`¡Caja Militar [${foundW.rarity}]: Encontraste ${foundW.name} + ${scrapBonus} Chatarra!`);
+              const outcome = acquireOrPromptWeapon(foundW.id, 'Caja Militar de Suministros');
+              if (outcome === 'added') {
+                showLootToast(`¡Caja Militar [${foundW.rarity}]: Encontraste ${foundW.name} + ${scrapBonus} Chatarra${vestMsg}!`);
+              } else if (outcome === 'prompted') {
+                showLootToast(`¡Caja Militar [${foundW.rarity}]: Salió ${foundW.name}! Elige qué botar o dejar`);
+              }
             } else if (lockedAtts.length > 0 && Math.random() < 0.45) {
               const foundAtt = lockedAtts[Math.floor(Math.random() * lockedAtts.length)];
               eng.ownedAttachments.add(foundAtt.id);
               setOwnedAttachments(Array.from(eng.ownedAttachments));
-              showLootToast(`¡Accesorio encontrado: ${foundAtt.name} (equipa en [B])!`);
+              showLootToast(`¡Accesorio encontrado: ${foundAtt.name} (equipa en [B])${vestMsg}!`);
             } else {
-              showLootToast(`Caja (sin arma): ${ammoMsg}+${scrapBonus} Chatarra · +1 Botiquín`);
+              showLootToast(`Caja: ${ammoMsg}+${scrapBonus} Chatarra · +Suministros${vestMsg}`);
             }
           } else if (foundNearVehicle) {
             eng.drivingVehicleId = foundNearVehicle.id;
@@ -3441,14 +4143,19 @@ export const GameArena: React.FC<GameArenaProps> = ({
             foundNearVehicle.headlightsOn = true;
             foundNearVehicle.rig.headlightBeam.intensity = 3.8;
             setDrivingVehicle({
+              type: foundNearVehicle.type,
               name: foundNearVehicle.name,
               speedKmh: 0,
               hp: foundNearVehicle.hp,
               maxHp: foundNearVehicle.maxHp,
+              fuel: Math.round(foundNearVehicle.fuel),
+              maxFuel: foundNearVehicle.maxFuel,
               headlights: true,
             });
             soundEngine.playPickup();
-            showLootToast(`Conduciendo ${foundNearVehicle.name} · [K] Bocina · [L] Luces · [E] Bajar`);
+            showLootToast(
+              `Conduciendo ${foundNearVehicle.name} (${Math.round(foundNearVehicle.fuel)}% Gas) · [U] Repostar · [K] Bocina · [E] Bajar`
+            );
           }
         }
       }
@@ -3643,18 +4350,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   showLootToast('¡Vehículo inutilizado!');
                 }
               } else {
-                eng.hp = Math.max(0, eng.hp - dmg);
-                setHp(eng.hp);
-                soundEngine.playHurt();
-                setDamageFlash(true);
-                window.setTimeout(() => setDamageFlash(false), 180);
-                if (eng.hp <= 0) {
-                  eng.gameOver = true;
-                  setGameOver(true);
-                  if (document.pointerLockElement === canvas) {
-                    document.exitPointerLock();
-                  }
-                }
+                applyPlayerDamage(dmg, 'melee', Boolean(z.isBoss));
               }
             }
 
@@ -3807,15 +4503,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
           if (activeCar) {
             activeCar.hp = Math.max(5, activeCar.hp - 4);
           } else {
-            eng.hp = Math.max(0, eng.hp - sp.damage);
-            setHp(eng.hp);
-            soundEngine.playHurt();
-            setDamageFlash(true);
-            window.setTimeout(() => setDamageFlash(false), 180);
-            if (eng.hp <= 0) {
-              eng.gameOver = true;
-              setGameOver(true);
-            }
+            applyPlayerDamage(sp.damage, 'acid', false);
           }
           spawnParticles(sp.mesh.position, 0x4ade80, 7, 3.5);
           scene.remove(sp.mesh);
@@ -4093,13 +4781,23 @@ export const GameArena: React.FC<GameArenaProps> = ({
           if (pk.kind === 'medkit') {
             if (eng.hp < eng.maxHp) {
               eng.hp = Math.min(eng.maxHp, eng.hp + 35);
-              setHp(eng.hp);
+              setHp(Number(eng.hp.toFixed(1)));
               showLootToast('+35 Salud (Botiquín)');
             } else {
               eng.medkits = Math.min(5, eng.medkits + 1);
               setMedkits(eng.medkits);
-              showLootToast('+1 Botiquín guardado en Inventario [I]');
+              showLootToast('+1 Botiquín guardado en Mochila [I]');
             }
+          } else if (pk.kind === 'vest') {
+            equipFoundVest(pk.vestTier && pk.vestTier !== 'none' ? pk.vestTier : 'light');
+          } else if (pk.kind === 'bandage') {
+            eng.bandages = Math.min(8, eng.bandages + 1);
+            setBandages(eng.bandages);
+            showLootToast('+1 Venda guardada en Mochila [I] (Cura con [N])');
+          } else if (pk.kind === 'fuel') {
+            eng.fuelCans = Math.min(5, eng.fuelCans + 1);
+            setFuelCans(eng.fuelCans);
+            showLootToast('+1 Bidón de Gasolina guardado en Mochila [I] (Reposta con [U])');
           } else if (pk.kind === 'ammo') {
             const ammoTargetId =
               !WEAPON_MAP[eng.activeWeaponId].isMelee
@@ -4277,7 +4975,9 @@ export const GameArena: React.FC<GameArenaProps> = ({
   const activeAtt = normalizeAttachments(weaponAttachments[activeWeaponId]);
   const activeEff = computeEffectiveWeaponStats(activeWeaponId, activeAtt);
   const curAmmo = ammoState[activeWeaponId] || { mag: activeEff.magSize, reserve: activeEff.reserveMax };
-  const hpPct = Math.round((hp / maxHp) * 100);
+  const hpPct = Math.max(0, Math.min(100, Math.round((hp / maxHp) * 100)));
+  const shieldPct = armorShieldMax > 0 ? Math.max(0, Math.min(100, Math.round((armorShield / armorShieldMax) * 100))) : 0;
+  const woundMeta = WOUND_META[woundType];
   const accuracy = practiceStats.shots > 0 ? Math.round((practiceStats.hits / practiceStats.shots) * 100) : 0;
 
   const activeOpticId =
@@ -4343,7 +5043,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
       ))}
 
       {/* Center Crosshair & Usable 1st-Person Optic ADS Reticles */}
-      {!gameOver && !showArmory && !showInventory && !drivingVehicle && (
+      {!gameOver && !showArmory && !showInventory && !pendingWeaponOffer && !drivingVehicle && (
         <div className="pointer-events-none fixed inset-0 z-20 flex items-center justify-center">
           <div className="relative flex items-center justify-center">
             {isScopedZoom && activeOpticId === 'sniper_8x' ? (
@@ -4408,7 +5108,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
       )}
 
       {/* Crate / Weapon World Pickup Prompt */}
-      {nearPrompt && !showArmory && !showInventory && !gameOver && (
+      {nearPrompt && !showArmory && !showInventory && !pendingWeaponOffer && !gameOver && (
         <div className="fixed top-[58%] left-1/2 -translate-x-1/2 z-30">
           <button
             type="button"
@@ -4461,7 +5161,11 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 onClick={() => {
                   const next = !practiceShowAll;
                   setPracticeShowAll(next);
-                  const list = next ? WEAPONS.map((w) => w.id) : Array.from(new Set<WeaponId>(progression.ownedWeapons));
+                  const list = (
+                    next
+                      ? WEAPONS.map((w) => w.id)
+                      : Array.from(new Set<WeaponId>(progression.ownedWeapons))
+                  ).slice(0, MAX_WEAPON_SLOTS);
                   engineRef.current.unlockedWeapons = new Set<WeaponId>(list);
                   setUnlockedWeapons(list);
                   if (!list.includes(engineRef.current.activeWeaponId) && list[0]) {
@@ -4474,7 +5178,9 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     : 'bg-slate-800 border-slate-700 text-emerald-300 hover:bg-slate-700'
                 }`}
               >
-                {practiceShowAll ? 'Probar: Todas' : `Solo mis armas (${progression.ownedWeapons.length})`}
+                {practiceShowAll
+                  ? `Probar: Top ${MAX_WEAPON_SLOTS}`
+                  : `Solo mis armas (${Math.min(MAX_WEAPON_SLOTS, progression.ownedWeapons.length)}/${MAX_WEAPON_SLOTS})`}
               </button>
             </>
           ) : (
@@ -4557,6 +5263,43 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     <span className="text-slate-400">Botiquines [H] </span>
                     <span className="font-mono-num font-bold text-emerald-400 text-sm">{medkits}</span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={useBandage}
+                    className="pointer-events-auto text-left hover:text-amber-300 transition-colors"
+                    title="Aplicar venda para limpiar heridas o detener sangrado/mordisco (N)"
+                  >
+                    <span className="text-slate-400">Vendas [N] </span>
+                    <span className="font-mono-num font-bold text-rose-300 text-sm">{bandages}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={triggerRefuelVehicle}
+                    className="pointer-events-auto text-left hover:text-amber-300 transition-colors"
+                    title="Repostar gasolina al vehículo/moto actual (U)"
+                  >
+                    <span className="text-slate-400">Gasolina [U] </span>
+                    <span className="font-mono-num font-bold text-amber-300 text-sm">{fuelCans}</span>
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400">Chaleco:</span>
+                    <span
+                      className="font-mono-num font-semibold"
+                      style={{ color: VEST_CATALOG[vestTier].colorHex }}
+                    >
+                      {vestTier === 'none' ? 'Ninguno' : `${Math.round(armorShield)}/${armorShieldMax}`}
+                    </span>
+                  </div>
+                  {woundType !== 'none' && (
+                    <button
+                      type="button"
+                      onClick={useBandage}
+                      className={`pointer-events-auto px-2 py-0.5 rounded border text-[11px] font-semibold ${woundMeta.badgeClass}`}
+                      title="Usar venda [N] o botiquín [H]"
+                    >
+                      {woundMeta.shortLabel}
+                    </button>
+                  )}
                   <div className="flex items-center gap-1.5">
                     <span className="text-slate-400">Ruido:</span>
                     <span
@@ -4593,6 +5336,22 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     </span>
                     <span className="text-[10px] text-slate-500 ml-1">[Y]</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={useBandage}
+                    className="pointer-events-auto text-left hover:text-amber-300 transition-colors"
+                  >
+                    <span className="text-slate-400">Vendas [N] </span>
+                    <span className="font-mono-num font-bold text-rose-300 text-sm">{bandages}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={triggerRefuelVehicle}
+                    className="pointer-events-auto text-left hover:text-amber-300 transition-colors"
+                  >
+                    <span className="text-slate-400">Gasolina [U] </span>
+                    <span className="font-mono-num font-bold text-amber-300 text-sm">{fuelCans}</span>
+                  </button>
                 </>
               )}
             </div>
@@ -4614,7 +5373,9 @@ export const GameArena: React.FC<GameArenaProps> = ({
             }`}
           >
             <Backpack className="w-4 h-4 text-sky-400" />
-            <span className="hidden sm:inline">Inventario [I]</span>
+            <span className="hidden sm:inline">
+              Mochila [I] ({unlockedWeapons.length}/{MAX_WEAPON_SLOTS})
+            </span>
           </button>
 
           <button
@@ -4740,6 +5501,20 @@ export const GameArena: React.FC<GameArenaProps> = ({
         </div>
       )}
 
+      {/* Prominent Wound Status Alert Banner */}
+      {woundBanner && (
+        <div
+          className={`pointer-events-none fixed ${
+            activeBoss ? 'top-56' : waveBanner ? 'top-32' : 'top-20'
+          } left-1/2 -translate-x-1/2 z-30 px-5 py-2.5 rounded-lg border font-display text-xs sm:text-sm font-bold tracking-wide text-center shadow-xl flex items-center gap-2 ${
+            WOUND_META[woundBanner.type].bannerClass
+          }`}
+        >
+          <Droplets className="w-4 h-4 shrink-0" />
+          <span>{woundBanner.text}</span>
+        </div>
+      )}
+
       {mode === 'multiplayer' && mpStatus && (
         <div className="pointer-events-none fixed top-20 left-1/2 -translate-x-1/2 z-30 px-5 py-2 rounded-lg bg-[#0a0e14]/92 border border-slate-700 text-slate-200 text-xs">
           {mpStatus}
@@ -4756,11 +5531,12 @@ export const GameArena: React.FC<GameArenaProps> = ({
         </div>
       )}
 
-      {!touchMode && !pointerLocked && !showArmory && !showInventory && !chatOpen && !gameOver && (
+      {!touchMode && !pointerLocked && !showArmory && !showInventory && !pendingWeaponOffer && !chatOpen && !gameOver && (
         <div className="pointer-events-none fixed top-1/2 left-1/2 -translate-x-1/2 translate-y-10 z-20 px-4 py-2 rounded-lg bg-[#0a0e14]/90 border border-slate-700 text-xs text-slate-200 text-center">
           Clic para jugar · <span className="text-amber-400">Clic Der. / Q</span> Mira ·{' '}
           <span className="text-amber-400">X</span> Granada · <span className="text-amber-400">T / Y</span> Trampas ·{' '}
-          <span className="text-amber-400">G</span> Piedra · <span className="text-amber-400">I</span> Inventario
+          <span className="text-amber-400">N</span> Venda · <span className="text-amber-400">U</span> Gasolina ·{' '}
+          <span className="text-amber-400">I</span> Mochila
         </div>
       )}
 
@@ -4770,7 +5546,12 @@ export const GameArena: React.FC<GameArenaProps> = ({
           <div className="pointer-events-auto mx-auto flex flex-wrap items-center justify-center gap-4 px-5 py-2.5 rounded-lg bg-[#0a0e14]/92 border border-amber-500/70">
             <div className="flex items-center gap-2">
               <Car className="w-5 h-5 text-amber-400" />
-              <span className="font-display text-sm font-bold text-white">{drivingVehicle.name}</span>
+              <div>
+                <span className="font-display text-sm font-bold text-white">{drivingVehicle.name}</span>
+                <span className="ml-2 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] text-amber-300 font-semibold">
+                  {drivingVehicle.type === 'moto' ? 'Moto' : 'Vehículo'}
+                </span>
+              </div>
             </div>
             <div className="font-mono-num text-xl font-bold text-amber-400">
               {drivingVehicle.speedKmh} <span className="text-xs text-slate-400">km/h</span>
@@ -4787,10 +5568,58 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 />
               </div>
             </div>
+            {/* Live Fuel Gauge */}
+            <div className="w-36">
+              <div className="text-[10px] flex justify-between items-center">
+                <span className="text-slate-300 flex items-center gap-1">
+                  <Fuel className={`w-3 h-3 ${drivingVehicle.fuel <= 20 ? 'text-red-400' : 'text-amber-400'}`} />
+                  <span>Gasolina</span>
+                </span>
+                <span
+                  className={`font-mono-num font-bold ${
+                    drivingVehicle.fuel <= 0
+                      ? 'text-red-400'
+                      : drivingVehicle.fuel <= 25
+                      ? 'text-amber-300'
+                      : 'text-emerald-400'
+                  }`}
+                >
+                  {Math.round((drivingVehicle.fuel / Math.max(1, drivingVehicle.maxFuel)) * 100)}%
+                </span>
+              </div>
+              <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mt-0.5">
+                <div
+                  className={`h-full transition-all duration-150 ${
+                    drivingVehicle.fuel <= 15
+                      ? 'bg-red-500'
+                      : drivingVehicle.fuel <= 35
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-400'
+                  }`}
+                  style={{
+                    width: `${Math.max(0, Math.min(100, (drivingVehicle.fuel / Math.max(1, drivingVehicle.maxFuel)) * 100))}%`,
+                  }}
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={triggerRefuelVehicle}
+              disabled={mode !== 'practice' && fuelCans <= 0}
+              className={`px-2.5 py-1.5 rounded text-xs font-semibold border flex items-center gap-1 transition-colors ${
+                mode === 'practice' || fuelCans > 0
+                  ? 'bg-amber-600/80 hover:bg-amber-500 border-amber-400 text-white'
+                  : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              <Fuel className="w-3.5 h-3.5" />
+              <span>Repostar [U] ({mode === 'practice' ? '∞' : fuelCans})</span>
+            </button>
             {!touchMode && (
               <div className="text-[11px] text-slate-300 flex items-center gap-2">
                 <span><strong className="text-amber-400">WASD</strong> Conducir</span>
                 <span><strong className="text-amber-400">Shift</strong> Turbo</span>
+                <span><strong className="text-amber-400">U</strong> Gasolina</span>
                 <span><strong className="text-amber-400">K/Clic</strong> Bocina</span>
                 <span><strong className="text-amber-400">L</strong> {drivingVehicle.headlights ? 'Luces ON' : 'Luces OFF'}</span>
                 <span><strong className="text-amber-400">E</strong> Bajar</span>
@@ -4800,18 +5629,31 @@ export const GameArena: React.FC<GameArenaProps> = ({
         ) : (
           !touchMode && (
             <div className="pointer-events-auto mx-auto flex items-center gap-1 p-1 rounded-lg bg-[#0a0e14]/90 border border-slate-700/80 overflow-x-auto max-w-full">
-              {WEAPONS.filter((w) => unlockedWeapons.includes(w.id)).map((w, idx) => {
+              {Array.from({ length: MAX_WEAPON_SLOTS }).map((_, slotIdx) => {
+                const wId = unlockedWeapons[slotIdx];
+                const w = wId ? WEAPON_MAP[wId] : null;
+                if (!w) {
+                  return (
+                    <div
+                      key={`empty-slot-${slotIdx}`}
+                      className="px-2.5 py-1.5 rounded text-xs text-slate-500 border border-dashed border-slate-800 whitespace-nowrap"
+                    >
+                      <span className="font-mono-num mr-1">{slotIdx + 1}</span>
+                      <span>Vacío</span>
+                    </div>
+                  );
+                }
                 const active = w.id === activeWeaponId;
                 return (
                   <button
                     key={w.id}
                     type="button"
                     onClick={() => switchWeapon(w.id)}
-                    className={`px-2.5 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors ${
+                    className={`px-2.5 py-1.5 rounded text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                       active ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:bg-slate-800'
                     }`}
                   >
-                    <span className="font-mono-num opacity-75 mr-1">{idx + 1}</span>
+                    <span className="font-mono-num opacity-75">{slotIdx + 1}</span>
                     <span>{w.name}</span>
                   </button>
                 );
@@ -4821,15 +5663,36 @@ export const GameArena: React.FC<GameArenaProps> = ({
         )}
 
         <div className="flex items-end justify-between gap-4">
-          <div className="pointer-events-auto px-4 py-2.5 rounded-lg bg-[#0a0e14]/90 border border-slate-700/80 min-w-[225px]">
+          <div className="pointer-events-auto px-4 py-2.5 rounded-lg bg-[#0a0e14]/90 border border-slate-700/80 min-w-[250px]">
+            {/* Vest / Armor Shield Bar */}
+            {vestTier !== 'none' && (
+              <div className="mb-1.5">
+                <div className="flex items-center justify-between text-[11px] mb-0.5">
+                  <span className="font-semibold flex items-center gap-1" style={{ color: VEST_CATALOG[vestTier].colorHex }}>
+                    <Shield className="w-3 h-3" />
+                    <span>{VEST_CATALOG[vestTier].label}</span>
+                  </span>
+                  <span className="font-mono-num text-sky-300 font-bold">
+                    {Math.round(armorShield)} / {armorShieldMax}
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-150"
+                    style={{ width: `${shieldPct}%`, backgroundColor: VEST_CATALOG[vestTier].colorHex }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between text-xs mb-1">
               <span className="text-slate-300 font-medium flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                <HeartPulse className="w-3.5 h-3.5 text-emerald-400" />
                 <span>{character.name}</span>
                 {isCrouching && <span className="text-sky-400 font-semibold">· Sigilo</span>}
               </span>
               <span className="font-mono-num font-bold text-white">
-                {hp} / {maxHp}
+                {woundType === 'bleeding' || woundType === 'bite' ? hp.toFixed(1) : Math.ceil(hp)} / {maxHp}
               </span>
             </div>
             <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
@@ -4846,6 +5709,20 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 <div className="h-full bg-sky-400 transition-all duration-100" style={{ width: `${stamina}%` }} />
               </div>
             </div>
+            {woundType !== 'none' && (
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
+                <span className={`px-1.5 py-0.5 rounded border font-semibold ${woundMeta.badgeClass}`}>
+                  {woundMeta.shortLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={useBandage}
+                  className="text-amber-300 hover:text-amber-200 font-semibold underline"
+                >
+                  Curar [N]
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="pointer-events-auto px-4 py-2.5 rounded-lg bg-[#0a0e14]/90 border border-slate-700/80 text-right min-w-[235px]">
@@ -4894,7 +5771,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
       </div>
 
       {/* Touch Controls */}
-      {touchMode && !gameOver && !showArmory && !showInventory && (
+      {touchMode && !gameOver && !showArmory && !showInventory && !pendingWeaponOffer && (
         <div className="fixed inset-0 z-20 pointer-events-none">
           <div
             onTouchStart={handleLookStart}
@@ -4915,25 +5792,36 @@ export const GameArena: React.FC<GameArenaProps> = ({
           </div>
 
           <div className="pointer-events-auto absolute top-16 left-3 right-3 flex items-center gap-1.5 overflow-x-auto pb-1">
-            {WEAPONS.filter((w) => unlockedWeapons.includes(w.id)).map((w) => (
-              <button
-                key={w.id}
-                type="button"
-                onClick={() => switchWeapon(w.id)}
-                className={`px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap border ${
-                  w.id === activeWeaponId
-                    ? 'bg-amber-500 text-slate-950 border-amber-300'
-                    : 'bg-[#0a0e14]/85 text-slate-200 border-slate-700'
-                }`}
-              >
-                {w.name}
-              </button>
-            ))}
+            {unlockedWeapons
+              .map((id) => WEAPON_MAP[id])
+              .filter(Boolean)
+              .map((w, idx) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => switchWeapon(w.id)}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap border ${
+                    w.id === activeWeaponId
+                      ? 'bg-amber-500 text-slate-950 border-amber-300'
+                      : 'bg-[#0a0e14]/85 text-slate-200 border-slate-700'
+                  }`}
+                >
+                  {idx + 1}. {w.name}
+                </button>
+              ))}
           </div>
 
           <div className="pointer-events-auto absolute bottom-20 right-5 flex flex-col items-end gap-2">
             {drivingVehicle ? (
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap justify-end items-center gap-2">
+                <button
+                  type="button"
+                  onClick={triggerRefuelVehicle}
+                  className="h-12 px-3.5 rounded-lg bg-amber-600/85 border border-amber-400 text-white text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <Fuel className="w-4 h-4" />
+                  <span>Gasolina ({mode === 'practice' ? '∞' : fuelCans})</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -4996,6 +5884,13 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     title="Cambiar tipo de trampa"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={useBandage}
+                    className="h-10 px-2.5 rounded-lg bg-[#0a0e14]/88 border border-rose-500/70 text-rose-300 text-xs font-semibold"
+                  >
+                    Venda ({bandages})
                   </button>
                   <button
                     type="button"
@@ -5100,19 +5995,23 @@ export const GameArena: React.FC<GameArenaProps> = ({
         </div>
       )}
 
-      {/* Character Inventory Modal [I] */}
+      {/* Complete Mochila (Backpack) Modal [I] */}
       {showInventory && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/78 p-4">
-          <div className="w-full max-w-4xl bg-[#11161f] border border-slate-700 rounded-xl overflow-hidden flex flex-col max-h-[88vh]">
+          <div className="w-full max-w-5xl bg-[#11161f] border border-slate-700 rounded-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0d1118]">
               <div className="flex items-center gap-2.5">
                 <Backpack className="w-5 h-5 text-sky-400" />
                 <div>
                   <h3 className="font-display text-lg font-bold text-white">
-                    Inventario del Operador ({character.name})
+                    Mochila del Operador ({character.name})
                   </h3>
                   <p className="text-xs text-slate-400">
-                    {armorInfo?.label} · {helmetInfo?.label} · {backpackInfo?.label} · {patternInfo?.label} · {emblemInfo?.label}
+                    Espacios de Armas:{' '}
+                    <span className="text-amber-300 font-semibold font-mono-num">
+                      {unlockedWeapons.length} / {MAX_WEAPON_SLOTS}
+                    </span>{' '}
+                    (sin duplicados) · {armorInfo?.label} · {helmetInfo?.label} · {backpackInfo?.label} · {patternInfo?.label} · {emblemInfo?.label}
                   </p>
                 </div>
               </div>
@@ -5126,17 +6025,133 @@ export const GameArena: React.FC<GameArenaProps> = ({
             </div>
 
             <div className="p-5 overflow-y-auto space-y-5">
-              {/* Consumables & Resources Row */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <div className="p-3.5 rounded-lg bg-[#161d28] border border-slate-800">
+              {/* Vest Shield & Medical Wound Status */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-[#161d28] border border-slate-800 flex flex-col justify-between gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Shield className="w-4 h-4 text-sky-400" />
+                      <span>Chaleco y Blindaje Equipado</span>
+                    </span>
+                    <span
+                      className="text-xs font-bold"
+                      style={{ color: VEST_CATALOG[vestTier].colorHex }}
+                    >
+                      {VEST_CATALOG[vestTier].label}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-mono-num text-slate-300">
+                    <span>
+                      Durabilidad: <strong className="text-white">{Math.round(armorShield)} / {armorShieldMax}</strong>
+                    </span>
+                    <span>
+                      Reducción de daño:{' '}
+                      <strong className="text-emerald-400">
+                        {Math.round(VEST_CATALOG[vestTier].dmgReduction * 100)}%
+                      </strong>
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
+                    <div
+                      className="h-full transition-all"
+                      style={{ width: `${shieldPct}%`, backgroundColor: VEST_CATALOG[vestTier].colorHex }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Encuentra chalecos en cajas de suministros, loot del mapa o fabrícalos en la Mesa [B].
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-lg bg-[#161d28] border border-slate-800 flex flex-col justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Droplets className="w-4 h-4 text-rose-400" />
+                      <span>Estado de Heridas y Salud ({hp.toFixed(1)}/{maxHp} PS)</span>
+                    </span>
+                    <span className={`px-2 py-0.5 rounded border text-[11px] font-semibold ${woundMeta.badgeClass}`}>
+                      {woundMeta.label}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    {woundType === 'none'
+                      ? 'Sin heridas activas. Herida Superficial = 0 PS/s · Sangrado = -0.1 PS/s · Mordisco = -1.0 PS/s.'
+                      : woundMeta.message}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={useBandage}
+                      disabled={(mode !== 'practice' && bandages <= 0) || woundType === 'none'}
+                      className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 ${
+                        woundType !== 'none' && (mode === 'practice' || bandages > 0)
+                          ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <Droplets className="w-3.5 h-3.5" />
+                      <span>Aplicar Venda [N] ({mode === 'practice' ? '∞' : bandages})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={usePortableMedkit}
+                      disabled={medkits <= 0 || (hp >= maxHp && woundType === 'none')}
+                      className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 ${
+                        medkits > 0 && (hp < maxHp || woundType !== 'none')
+                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <Heart className="w-3.5 h-3.5" />
+                      <span>Usar Botiquín [H] ({medkits})</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Full Supplies & Consumables Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
                   <div className="text-[11px] text-slate-400">Chatarra</div>
-                  <div className="font-mono-num text-xl font-bold text-sky-400 mt-0.5">
+                  <div className="font-mono-num text-lg font-bold text-sky-400 mt-0.5">
                     {mode === 'practice' ? '∞' : scrap}
                   </div>
                 </div>
-                <div className="p-3.5 rounded-lg bg-[#161d28] border border-slate-800">
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
+                  <div className="text-[11px] text-slate-400">Créditos Hangar</div>
+                  <div className="font-mono-num text-lg font-bold text-amber-300 mt-0.5">
+                    {progression.credits}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] text-slate-400">Bidones Gasolina [U]</div>
+                    <div className="font-mono-num text-lg font-bold text-amber-400 mt-0.5">
+                      {mode === 'practice' ? '∞' : `${fuelCans} / 5`}
+                    </div>
+                  </div>
+                  {drivingVehicle && (
+                    <button
+                      type="button"
+                      onClick={triggerRefuelVehicle}
+                      className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold"
+                    >
+                      Repostar
+                    </button>
+                  )}
+                </div>
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
+                  <div className="text-[11px] text-slate-400">Vendas [N]</div>
+                  <div className="font-mono-num text-lg font-bold text-rose-300 mt-0.5">
+                    {mode === 'practice' ? '∞' : `${bandages} / 8`}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
+                  <div className="text-[11px] text-slate-400">Botiquines [H]</div>
+                  <div className="font-mono-num text-lg font-bold text-emerald-400 mt-0.5">{medkits} / 5</div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
                   <div className="text-[11px] text-slate-400">Granadas [X]</div>
-                  <div className="font-mono-num text-xl font-bold text-lime-400 mt-0.5">
+                  <div className="font-mono-num text-lg font-bold text-lime-400 mt-0.5">
                     {mode === 'practice' ? '∞' : `${grenadesCount} / 6`}
                   </div>
                 </div>
@@ -5145,14 +6160,14 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     engineRef.current.selectedTrap = 'bear_trap';
                     setSelectedTrap('bear_trap');
                   }}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-colors ${
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                     selectedTrap === 'bear_trap'
                       ? 'bg-orange-500/15 border-orange-400'
                       : 'bg-[#161d28] border-slate-800 hover:border-slate-600'
                   }`}
                 >
                   <div className="text-[11px] text-slate-400">Trampas Osos [T]</div>
-                  <div className="font-mono-num text-xl font-bold text-orange-400 mt-0.5">
+                  <div className="font-mono-num text-lg font-bold text-orange-400 mt-0.5">
                     {mode === 'practice' ? '∞' : `${bearTraps} / 6`}
                   </div>
                 </div>
@@ -5161,47 +6176,36 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     engineRef.current.selectedTrap = 'landmine';
                     setSelectedTrap('landmine');
                   }}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-colors ${
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                     selectedTrap === 'landmine'
                       ? 'bg-red-500/15 border-red-400'
                       : 'bg-[#161d28] border-slate-800 hover:border-slate-600'
                   }`}
                 >
                   <div className="text-[11px] text-slate-400">Minas Explosivas [T]</div>
-                  <div className="font-mono-num text-xl font-bold text-red-400 mt-0.5">
+                  <div className="font-mono-num text-lg font-bold text-red-400 mt-0.5">
                     {mode === 'practice' ? '∞' : `${landmines} / 6`}
                   </div>
                 </div>
-                <div className="p-3.5 rounded-lg bg-[#161d28] border border-slate-800">
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
                   <div className="text-[11px] text-slate-400">Piedras [G]</div>
-                  <div className="font-mono-num text-xl font-bold text-amber-400 mt-0.5">{stones} / 12</div>
+                  <div className="font-mono-num text-lg font-bold text-amber-400 mt-0.5">{stones} / 12</div>
                 </div>
-                <div className="p-3.5 rounded-lg bg-[#161d28] border border-slate-800 flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-[11px] text-slate-400">Botiquín [H]</div>
-                    <div className="font-mono-num text-xl font-bold text-emerald-400 mt-0.5">{medkits} / 5</div>
+                <div className="p-3 rounded-lg bg-[#161d28] border border-slate-800">
+                  <div className="text-[11px] text-slate-400">Vehículo / Moto</div>
+                  <div className="text-xs font-semibold text-slate-200 mt-1">
+                    {drivingVehicle
+                      ? `${drivingVehicle.name} (${Math.round(drivingVehicle.fuel)}%)`
+                      : 'A pie'}
                   </div>
-                  <button
-                    type="button"
-                    onClick={usePortableMedkit}
-                    disabled={medkits <= 0 || hp >= maxHp}
-                    className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 ${
-                      medkits > 0 && hp < maxHp
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                        : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                    }`}
-                  >
-                    <Heart className="w-3.5 h-3.5" />
-                    <span>Usar</span>
-                  </button>
                 </div>
               </div>
 
-              {/* Carried Weapons & Attachments Breakdown */}
+              {/* 5 Fixed Weapon Slots (Unique Weapons Only) */}
               <div>
                 <div className="flex items-center justify-between mb-2.5">
                   <h4 className="font-display text-sm font-bold text-white">
-                    Armas en Mochila ({unlockedWeapons.length})
+                    Armas en Mochila ({unlockedWeapons.length} / {MAX_WEAPON_SLOTS} espacios · sin repetir)
                   </h4>
                   <button
                     type="button"
@@ -5217,8 +6221,27 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {WEAPONS.filter((w) => unlockedWeapons.includes(w.id)).map((w) => {
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {Array.from({ length: MAX_WEAPON_SLOTS }).map((_, slotIdx) => {
+                    const wId = unlockedWeapons[slotIdx];
+                    const w = wId ? WEAPON_MAP[wId] : null;
+                    if (!w) {
+                      return (
+                        <div
+                          key={`backpack-empty-${slotIdx}`}
+                          className="p-3.5 rounded-lg border border-dashed border-slate-700 bg-[#0d121a] flex flex-col items-center justify-center text-center min-h-[140px]"
+                        >
+                          <span className="text-xs font-mono-num text-slate-500 font-bold">
+                            Ranura {slotIdx + 1} / {MAX_WEAPON_SLOTS}
+                          </span>
+                          <span className="text-xs text-slate-400 mt-1">Espacio Libre</span>
+                          <span className="text-[11px] text-slate-500 mt-0.5">
+                            Recoge un arma distinta en cajas o en el mapa
+                          </span>
+                        </div>
+                      );
+                    }
+
                     const att = normalizeAttachments(weaponAttachments[w.id]);
                     const eff = computeEffectiveWeaponStats(w.id, att);
                     const am = ammoState[w.id] || { mag: eff.magSize, reserve: eff.reserveMax };
@@ -5233,6 +6256,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                         <div>
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-mono-num text-[11px] text-slate-400">#{slotIdx + 1}</span>
                               <span className="font-display font-bold text-sm text-white truncate">{w.name}</span>
                               <span
                                 className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold shrink-0 ${
@@ -5260,9 +6284,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                             <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
                               <div>Mira: <span className="text-slate-200">{att.optic === 'none' ? 'Estándar' : ATTACHMENT_MAP[att.optic]?.name}</span></div>
                               <div>Bocacha: <span className="text-slate-200">{att.muzzle === 'none' ? 'Estándar' : ATTACHMENT_MAP[att.muzzle]?.name}</span></div>
-                              <div>Acople: <span className="text-slate-200">{att.underbarrel === 'none' ? 'Ninguno' : ATTACHMENT_MAP[att.underbarrel]?.name}</span></div>
                               <div>Cargador: <span className="text-slate-200">{att.magazine === 'standard' ? 'Estándar' : ATTACHMENT_MAP[att.magazine]?.name}</span></div>
-                              <div>Culata: <span className="text-slate-200">{!att.stock || att.stock === 'none' ? 'Estándar' : ATTACHMENT_MAP[att.stock]?.name}</span></div>
                             </div>
                           )}
                           <div className="mt-1 text-[11px] text-slate-400">
@@ -5273,18 +6295,38 @@ export const GameArena: React.FC<GameArenaProps> = ({
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            switchWeapon(w.id);
-                            setShowInventory(false);
-                          }}
-                          className={`w-full py-1.5 rounded text-xs font-semibold ${
-                            isEq ? 'bg-amber-500 text-slate-950' : 'bg-slate-700 hover:bg-slate-600 text-white'
-                          }`}
-                        >
-                          {isEq ? 'Equipada en mano' : 'Equipar Arma'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              switchWeapon(w.id);
+                              setShowInventory(false);
+                            }}
+                            className={`flex-1 py-1.5 rounded text-xs font-semibold ${
+                              isEq ? 'bg-amber-500 text-slate-950' : 'bg-slate-700 hover:bg-slate-600 text-white'
+                            }`}
+                          >
+                            {isEq ? 'Equipada' : 'Equipar'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => dropCarriedWeapon(w.id)}
+                            disabled={unlockedWeapons.length <= 1}
+                            title={
+                              unlockedWeapons.length <= 1
+                                ? 'Debes conservar al menos 1 arma'
+                                : 'Botar esta arma al suelo para liberar espacio'
+                            }
+                            className={`px-2.5 py-1.5 rounded text-xs font-semibold flex items-center gap-1 border ${
+                              unlockedWeapons.length <= 1
+                                ? 'bg-slate-800/60 border-slate-800 text-slate-600 cursor-not-allowed'
+                                : 'bg-red-950/70 hover:bg-red-900 border-red-700/70 text-red-200'
+                            }`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Botar</span>
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -5325,6 +6367,27 @@ export const GameArena: React.FC<GameArenaProps> = ({
                       className="px-2.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
                     >
                       +Botiquín (80)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={craftBandage}
+                      className="px-2.5 py-2 rounded-lg bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold transition-colors"
+                    >
+                      +Venda (45)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={craftFuelCan}
+                      className="px-2.5 py-2 rounded-lg bg-amber-700 hover:bg-amber-600 text-white text-xs font-semibold transition-colors"
+                    >
+                      +Gasolina (55)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => craftVestTier('light')}
+                      className="px-2.5 py-2 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs font-semibold transition-colors"
+                    >
+                      +Chaleco N1 (130)
                     </button>
                     <button
                       type="button"
@@ -5703,6 +6766,105 @@ export const GameArena: React.FC<GameArenaProps> = ({
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 5-Slot Full Inventory Weapon Choice Modal (Botar o Dejar) */}
+      {pendingWeaponOffer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-4">
+          <div className="w-full max-w-2xl bg-[#11161f] border border-amber-500/70 rounded-xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-slate-800 bg-[#0d1118] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <ArrowLeftRight className="w-5 h-5 text-amber-400 shrink-0" />
+                <div>
+                  <h3 className="font-display text-lg font-bold text-white">
+                    Mochila Llena ({MAX_WEAPON_SLOTS} / {MAX_WEAPON_SLOTS} Armas)
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Origen: {pendingWeaponOffer.sourceLabel} · Elige cuál arma botar al suelo o deja la nueva.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {(() => {
+              const incoming = WEAPON_MAP[pendingWeaponOffer.weaponId];
+              const rMeta = RARITY_META[incoming.rarity];
+              return (
+                <div className="p-5 overflow-y-auto space-y-4">
+                  {/* Incoming Weapon Card */}
+                  <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-400/70">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-amber-300 uppercase">Nueva Arma</span>
+                        <span className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${rMeta.badgeClass}`}>
+                          {rMeta.label}
+                        </span>
+                      </div>
+                      <span className="text-xs text-slate-300">{incoming.category}</span>
+                    </div>
+                    <div className="font-display text-lg font-bold text-white mt-1">{incoming.name}</div>
+                    <p className="text-xs text-slate-300 mt-0.5">{incoming.description}</p>
+                    <div className="mt-2 flex items-center gap-4 text-xs font-mono-num text-slate-200">
+                      <span>Daño: <strong className="text-amber-300">{incoming.damage}{incoming.pellets > 1 ? `×${incoming.pellets}` : ''}</strong></span>
+                      <span>{incoming.isMelee ? `Alcance: ${incoming.range}m` : `Cargador: ${incoming.magSize}`}</span>
+                    </div>
+                  </div>
+
+                  {/* Current 5 Weapons List */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-300 mb-2">
+                      Selecciona cuál de tus {unlockedWeapons.length} armas quieres BOTAR para quedarte con {incoming.name}:
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {unlockedWeapons.map((wId, idx) => {
+                        const w = WEAPON_MAP[wId];
+                        if (!w) return null;
+                        const wMeta = RARITY_META[w.rarity];
+                        return (
+                          <div
+                            key={`swap-slot-${wId}`}
+                            className="p-3 rounded-lg bg-[#161d28] border border-slate-700 flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono-num text-[11px] text-slate-400">#{idx + 1}</span>
+                                <span className="font-semibold text-xs text-white truncate">{w.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className={`px-1.5 py-0.5 rounded border text-[9px] font-semibold ${wMeta.badgeClass}`}>
+                                  {wMeta.label}
+                                </span>
+                                <span className="text-[11px] text-slate-400">{w.category}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => confirmSwapPendingWeapon(wId)}
+                              className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-semibold shrink-0 flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Botar</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={rejectPendingWeapon}
+                      className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-semibold"
+                    >
+                      Dejar nueva arma ({incoming.name})
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
